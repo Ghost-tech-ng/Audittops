@@ -1,0 +1,3017 @@
+import { db } from "./db";
+import { randomUUID } from "crypto";
+
+// DB Query timing instrumentation
+const DB_SLOW_THRESHOLD_MS = 500;
+
+function logDbTiming(operation: string, startTime: number, context?: Record<string, any>) {
+  const duration = Date.now() - startTime;
+  const contextStr = context ? ` ${JSON.stringify(context)}` : "";
+  if (duration > DB_SLOW_THRESHOLD_MS) {
+    console.warn(`[DB SLOW] ${operation} took ${duration}ms${contextStr}`);
+  }
+  return duration;
+}
+
+import {
+  users, clients, categories, departments, salesEntries, purchases,
+  stockMovements, stockMovementLines, reconciliations, exceptions, exceptionComments, exceptionActivity, auditLogs, adminActivityLogs, systemSettings,
+  suppliers, items, purchaseLines, stockCounts, paymentDeclarations,
+  userClientAccess, auditContexts, audits, auditReissuePermissions, auditChangeLog,
+  storeIssues, storeIssueLines, storeStock, storeNames, inventoryDepartments, inventoryDepartmentCategories, goodsReceivedNotes,
+  receivables, receivableHistory, surpluses, surplusHistory, srdTransfers, organizationSettings, userSettings, purchaseItemEvents, subscriptions, organizations,
+  notifications, dataExports,
+  type User, type InsertUser, type Client, type InsertClient,
+  type Category, type InsertCategory, type Department, type InsertDepartment,
+  type SalesEntry, type InsertSalesEntry, type Purchase, type InsertPurchase,
+  type StockMovement, type InsertStockMovement, type StockMovementLine, type InsertStockMovementLine,
+  type Reconciliation, type InsertReconciliation,
+  type Exception, type InsertException, type ExceptionComment, type InsertExceptionComment,
+  type ExceptionActivity, type InsertExceptionActivity,
+  type AuditLog, type InsertAuditLog, type AdminActivityLog, type InsertAdminActivityLog,
+  type Supplier, type InsertSupplier, type Item, type InsertItem,
+  type PurchaseLine, type InsertPurchaseLine, type StockCount, type InsertStockCount,
+  type PaymentDeclaration, type InsertPaymentDeclaration,
+  type UserClientAccess, type InsertUserClientAccess,
+  type AuditContext, type InsertAuditContext,
+  type Audit, type InsertAudit,
+  type AuditReissuePermission, type InsertAuditReissuePermission,
+  type AuditChangeLog, type InsertAuditChangeLog,
+  type StoreIssue, type InsertStoreIssue,
+  type StoreIssueLine, type InsertStoreIssueLine,
+  type StoreStock, type InsertStoreStock,
+  type StoreName, type InsertStoreName,
+  type InventoryDepartment, type InsertInventoryDepartment,
+  type InventoryDepartmentCategory, type InsertInventoryDepartmentCategory,
+  type GoodsReceivedNote, type InsertGoodsReceivedNote,
+  type Receivable, type InsertReceivable,
+  type ReceivableHistory, type InsertReceivableHistory,
+  type Surplus, type InsertSurplus,
+  type SurplusHistory, type InsertSurplusHistory,
+  type SrdTransfer, type InsertSrdTransfer,
+  type OrganizationSettings, type InsertOrganizationSettings,
+  type UserSettings, type InsertUserSettings,
+  type Notification, type InsertNotification,
+  type DataExport, type InsertDataExport,
+  type PurchaseItemEvent, type InsertPurchaseItemEvent,
+  type Subscription, type InsertSubscription,
+  type Organization, type InsertOrganization,
+  type Payment, type InsertPayment, payments
+} from "@shared/schema";
+import { eq, desc, and, gte, lte, lt, sql, or, ilike, count, sum, countDistinct, inArray } from "drizzle-orm";
+
+export interface DashboardFilters {
+  organizationId?: string;  // REQUIRED for tenant isolation
+  clientId?: string;
+  categoryId?: string;
+  departmentId?: string;
+  date?: string;
+}
+
+export interface DashboardSummary {
+  totalClients: number;
+  totalDepartments: number;
+  totalSalesToday: number;
+  totalPurchasesToday: number;
+  totalSales: number;
+  totalPurchases: number;
+  totalExceptions: number;
+  openExceptions: number;
+  totalVarianceValue: number;
+  pendingReconciliations: number;
+  recentExceptions: Exception[];
+  redFlags: { type: string; message: string; severity: string }[];
+}
+
+export interface IStorage {
+  // Users
+  getUser(id: string): Promise<User | undefined>;
+  getUserByUsername(username: string): Promise<User | undefined>;
+  getUserByEmail(email: string): Promise<User | undefined>;
+  getUserByVerificationToken(token: string): Promise<User | undefined>;
+  getUserByResetToken(token: string): Promise<User | undefined>;
+  getUsers(filters?: { role?: string; status?: string; search?: string }): Promise<User[]>;
+  getUserCount(): Promise<number>;
+  getSuperAdminCount(): Promise<number>;
+  createUser(user: InsertUser): Promise<User>;
+  updateUser(id: string, user: Partial<InsertUser>): Promise<User | undefined>;
+  deleteUser(id: string): Promise<boolean>;
+
+  // Clients
+  getClients(organizationId?: string): Promise<Client[]>;
+  getClient(id: string): Promise<Client | undefined>;
+  getClientWithOrgCheck(id: string, organizationId: string): Promise<Client | undefined>;
+  createClient(client: InsertClient): Promise<Client>;
+  updateClient(id: string, client: Partial<InsertClient>): Promise<Client | undefined>;
+  deleteClient(id: string): Promise<boolean>;
+
+  // Categories
+  getCategories(clientId: string): Promise<Category[]>;
+  getAllCategories(): Promise<Category[]>;
+  getCategory(id: string): Promise<Category | undefined>;
+  createCategory(category: InsertCategory): Promise<Category>;
+  updateCategory(id: string, category: Partial<InsertCategory>): Promise<Category | undefined>;
+  deleteCategory(id: string): Promise<boolean>;
+
+  // Departments
+  getDepartments(clientId: string): Promise<Department[]>;
+  getDepartmentsByCategory(categoryId: string): Promise<Department[]>;
+  getAllDepartments(): Promise<Department[]>;
+  getDepartmentsByOrganization(organizationId: string): Promise<Department[]>;
+  getCategoriesByOrganization(organizationId: string): Promise<Category[]>;
+  getDepartment(id: string): Promise<Department | undefined>;
+  createDepartment(department: InsertDepartment): Promise<Department>;
+  createDepartmentsBulk(departments: InsertDepartment[]): Promise<Department[]>;
+  updateDepartment(id: string, department: Partial<InsertDepartment>): Promise<Department | undefined>;
+  deleteDepartment(id: string): Promise<boolean>;
+  checkDepartmentUsage(id: string): Promise<boolean>;
+  checkDepartmentNameExists(clientId: string, name: string, excludeId?: string): Promise<boolean>;
+
+  // Suppliers
+  getSuppliers(clientId: string): Promise<Supplier[]>;
+  getSupplier(id: string): Promise<Supplier | undefined>;
+  createSupplier(supplier: InsertSupplier): Promise<Supplier>;
+  updateSupplier(id: string, supplier: Partial<InsertSupplier>): Promise<Supplier | undefined>;
+  deleteSupplier(id: string): Promise<boolean>;
+
+  // Items
+  getItems(clientId: string): Promise<Item[]>;
+  getItem(id: string): Promise<Item | undefined>;
+  createItem(item: InsertItem): Promise<Item>;
+  updateItem(id: string, item: Partial<InsertItem>): Promise<Item | undefined>;
+  deleteItem(id: string): Promise<boolean>;
+
+  // Purchase Lines
+  getPurchaseLines(purchaseId: string): Promise<PurchaseLine[]>;
+  createPurchaseLine(line: InsertPurchaseLine): Promise<PurchaseLine>;
+  deletePurchaseLines(purchaseId: string): Promise<boolean>;
+
+  // Stock Counts
+  getStockCounts(departmentId: string, date?: Date): Promise<StockCount[]>;
+  getStockCount(id: string): Promise<StockCount | undefined>;
+  getExistingStockCount(clientId: string, departmentId: string, itemId: string, startOfDay: Date, endOfDay: Date): Promise<StockCount | undefined>;
+  createStockCount(stockCount: InsertStockCount): Promise<StockCount>;
+  updateStockCount(id: string, stockCount: Partial<InsertStockCount>): Promise<StockCount | undefined>;
+  deleteStockCount(id: string): Promise<boolean>;
+
+  // Sales
+  getSalesEntries(departmentId: string, startDate?: Date, endDate?: Date): Promise<SalesEntry[]>;
+  getSalesEntriesByClient(clientId: string, startDate?: Date, endDate?: Date): Promise<SalesEntry[]>;
+  getAllSalesEntries(): Promise<SalesEntry[]>;
+  getSalesEntry(id: string): Promise<SalesEntry | undefined>;
+  createSalesEntry(entry: InsertSalesEntry): Promise<SalesEntry>;
+  updateSalesEntry(id: string, entry: Partial<InsertSalesEntry>): Promise<SalesEntry | undefined>;
+  deleteSalesEntry(id: string): Promise<boolean>;
+
+  // Purchases
+  getPurchases(clientId: string): Promise<Purchase[]>;
+  getPurchasesByDepartment(departmentId: string): Promise<Purchase[]>;
+  getAllPurchases(): Promise<Purchase[]>;
+  getPurchase(id: string): Promise<Purchase | undefined>;
+  createPurchase(purchase: InsertPurchase): Promise<Purchase>;
+  updatePurchase(id: string, purchase: Partial<InsertPurchase>): Promise<Purchase | undefined>;
+  deletePurchase(id: string): Promise<boolean>;
+
+  // Stock Movements
+  getStockMovements(clientId: string): Promise<StockMovement[]>;
+  getStockMovementsByDepartment(departmentId: string): Promise<StockMovement[]>;
+  getStockMovementsBySrd(srdId: string): Promise<StockMovement[]>;
+  getStockMovement(id: string): Promise<StockMovement | undefined>;
+  getStockMovementByIdempotencyKey(idempotencyKey: string): Promise<StockMovement | undefined>;
+  getStockMovementWithLines(id: string): Promise<{ movement: StockMovement; lines: StockMovementLine[] } | undefined>;
+  createStockMovement(movement: InsertStockMovement): Promise<StockMovement>;
+  updateStockMovement(id: string, movement: Partial<InsertStockMovement>): Promise<StockMovement | undefined>;
+  deleteStockMovement(id: string): Promise<boolean>;
+
+  // Stock Movement Lines
+  getStockMovementLines(movementId: string): Promise<StockMovementLine[]>;
+  createStockMovementLine(line: InsertStockMovementLine): Promise<StockMovementLine>;
+  createStockMovementLinesBulk(lines: InsertStockMovementLine[]): Promise<StockMovementLine[]>;
+  deleteStockMovementLines(movementId: string): Promise<boolean>;
+
+  // Reconciliations
+  getReconciliations(departmentId: string, date?: Date): Promise<Reconciliation[]>;
+  getReconciliationsByClient(clientId: string, startDate?: Date, endDate?: Date): Promise<Reconciliation[]>;
+  getAllReconciliations(): Promise<Reconciliation[]>;
+  getReconciliation(id: string): Promise<Reconciliation | undefined>;
+  createReconciliation(reconciliation: InsertReconciliation): Promise<Reconciliation>;
+  updateReconciliation(id: string, reconciliation: Partial<InsertReconciliation>): Promise<Reconciliation | undefined>;
+  deleteReconciliation(id: string): Promise<boolean>;
+
+  // Exceptions
+  getExceptions(filters?: { clientId?: string; departmentId?: string; status?: string; severity?: string; includeDeleted?: boolean }): Promise<Exception[]>;
+  getException(id: string): Promise<Exception | undefined>;
+  getExceptionWithActivity(id: string): Promise<{ exception: Exception; activity: ExceptionActivity[] } | undefined>;
+  createException(exception: InsertException): Promise<Exception>;
+  updateException(id: string, exception: Partial<InsertException>): Promise<Exception | undefined>;
+  deleteException(id: string): Promise<boolean>;
+  softDeleteException(id: string, deletedBy: string, deleteReason: string): Promise<Exception | undefined>;
+  generateExceptionCaseNumber(): Promise<string>;
+
+  // Exception Comments
+  getExceptionComments(exceptionId: string): Promise<ExceptionComment[]>;
+  createExceptionComment(comment: InsertExceptionComment): Promise<ExceptionComment>;
+
+  // Exception Activity
+  getExceptionActivity(exceptionId: string): Promise<ExceptionActivity[]>;
+  createExceptionActivity(activity: InsertExceptionActivity): Promise<ExceptionActivity>;
+
+  // Audit Logs
+  getAuditLogs(filters?: { limit?: number; offset?: number; userId?: string; entity?: string; startDate?: Date; endDate?: Date }): Promise<{ logs: AuditLog[]; total: number }>;
+  createAuditLog(log: InsertAuditLog): Promise<AuditLog>;
+
+  // Admin Activity Logs
+  getAdminActivityLogs(filters?: { actorId?: string; targetUserId?: string; actionType?: string; startDate?: Date; endDate?: Date }): Promise<AdminActivityLog[]>;
+  createAdminActivityLog(log: InsertAdminActivityLog): Promise<AdminActivityLog>;
+
+  // System Settings
+  getSetting(key: string): Promise<any>;
+  setSetting(key: string, value: any, updatedBy: string): Promise<void>;
+
+  // Dashboard
+  getDashboardSummary(filters?: DashboardFilters): Promise<DashboardSummary>;
+
+  // Payment Declarations
+  getPaymentDeclaration(clientId: string, departmentId: string, date: Date): Promise<PaymentDeclaration | undefined>;
+  getPaymentDeclarationById(id: string): Promise<PaymentDeclaration | undefined>;
+  getPaymentDeclarations(departmentId: string, startDate?: Date, endDate?: Date): Promise<PaymentDeclaration[]>;
+  createPaymentDeclaration(declaration: InsertPaymentDeclaration): Promise<PaymentDeclaration>;
+  updatePaymentDeclaration(id: string, declaration: Partial<InsertPaymentDeclaration>): Promise<PaymentDeclaration | undefined>;
+  deletePaymentDeclaration(id: string): Promise<boolean>;
+
+  // Sales summary for reconciliation
+  getSalesSummaryForDepartment(departmentId: string, date: Date): Promise<{ totalCash: number; totalPos: number; totalTransfer: number; totalSales: number }>;
+  getSalesSummaryForClient(clientId: string, date: Date, departmentId?: string): Promise<{ totalAmount: number; totalComplimentary: number; totalVouchers: number; totalVoids: number; totalOthers: number; totalCash: number; totalPos: number; totalTransfer: number; grandTotal: number; entriesCount: number; departmentsCount: number; avgPerEntry: number }>;
+  getDepartmentComparison(clientId: string, date: Date): Promise<Array<{ departmentId: string; departmentName: string; totalCaptured: number; totalDeclared: number; auditTotal: number; variance1stHit: number; variance2ndHit: number; finalVariance: number; varianceStatus: "shortage" | "surplus" | "balanced" }>>;
+
+  // User-Client Access
+  getUserClientAccess(userId: string, clientId: string): Promise<UserClientAccess | undefined>;
+  getUserClientAccessList(userId: string): Promise<UserClientAccess[]>;
+  getClientUserAccessList(clientId: string): Promise<UserClientAccess[]>;
+  createUserClientAccess(access: InsertUserClientAccess): Promise<UserClientAccess>;
+  updateUserClientAccess(id: string, access: Partial<InsertUserClientAccess>): Promise<UserClientAccess | undefined>;
+  deleteUserClientAccess(id: string): Promise<boolean>;
+  getAssignedClientsForUser(userId: string): Promise<Client[]>;
+
+  // Audit Contexts
+  getActiveAuditContext(userId: string): Promise<AuditContext | undefined>;
+  getAuditContext(id: string): Promise<AuditContext | undefined>;
+  createAuditContext(context: InsertAuditContext): Promise<AuditContext>;
+  updateAuditContext(id: string, context: Partial<InsertAuditContext>): Promise<AuditContext | undefined>;
+  clearAuditContext(userId: string): Promise<boolean>;
+
+  // Audits
+  getAudit(id: string): Promise<Audit | undefined>;
+  getAuditByPeriod(clientId: string, departmentId: string, startDate: Date, endDate: Date): Promise<Audit | undefined>;
+  getAudits(filters?: { clientId?: string; departmentId?: string; status?: string }): Promise<Audit[]>;
+  createAudit(audit: InsertAudit): Promise<Audit>;
+  updateAudit(id: string, audit: Partial<InsertAudit>): Promise<Audit | undefined>;
+  submitAudit(id: string, submittedBy: string): Promise<Audit | undefined>;
+  lockAudit(id: string, lockedBy: string): Promise<Audit | undefined>;
+
+  // Audit Reissue Permissions
+  getAuditReissuePermission(auditId: string, userId: string): Promise<AuditReissuePermission | undefined>;
+  getAuditReissuePermissions(auditId: string): Promise<AuditReissuePermission[]>;
+  createAuditReissuePermission(permission: InsertAuditReissuePermission): Promise<AuditReissuePermission>;
+  revokeAuditReissuePermission(id: string): Promise<boolean>;
+
+  // Audit Change Log
+  createAuditChangeLog(log: InsertAuditChangeLog): Promise<AuditChangeLog>;
+  getAuditChangeLogs(auditId: string): Promise<AuditChangeLog[]>;
+
+  // Store Issues
+  getStoreIssues(clientId: string, date?: Date): Promise<StoreIssue[]>;
+  getStoreIssue(id: string): Promise<StoreIssue | undefined>;
+  getStoreIssuesByDepartment(toDepartmentId: string, date?: Date): Promise<StoreIssue[]>;
+  createStoreIssue(issue: InsertStoreIssue): Promise<StoreIssue>;
+  updateStoreIssue(id: string, issue: Partial<InsertStoreIssue>): Promise<StoreIssue | undefined>;
+  deleteStoreIssue(id: string): Promise<boolean>;
+
+  // Store Issue Lines
+  getStoreIssueLines(storeIssueId: string): Promise<StoreIssueLine[]>;
+  createStoreIssueLine(line: InsertStoreIssueLine): Promise<StoreIssueLine>;
+  createStoreIssueLinesBulk(lines: InsertStoreIssueLine[]): Promise<StoreIssueLine[]>;
+  deleteStoreIssueLines(storeIssueId: string): Promise<boolean>;
+  getIssuedQtyForDepartment(departmentId: string, itemId: string, date: Date): Promise<number>;
+
+  // Store Stock
+  getStoreStock(clientId: string, storeDepartmentId: string, date?: Date): Promise<StoreStock[]>;
+  getStoreStockById(id: string): Promise<StoreStock | undefined>;
+  getStoreStockByItem(storeDepartmentId: string, itemId: string, date: Date): Promise<StoreStock | undefined>;
+  getPreviousDayClosing(storeDepartmentId: string, itemId: string, date: Date): Promise<string>;
+  getLatestClosingBeforeDate(storeDepartmentId: string, itemId: string, date: Date): Promise<{ closing: string; sourceDate: string | null }>;
+  createStoreStock(stock: InsertStoreStock): Promise<StoreStock>;
+  updateStoreStock(id: string, stock: Partial<InsertStoreStock>): Promise<StoreStock | undefined>;
+  upsertStoreStock(stock: InsertStoreStock): Promise<StoreStock>;
+
+  // Store Names (SRDs - client-specific)
+  getStoreNamesByClient(clientId: string): Promise<StoreName[]>;
+  getStoreName(id: string): Promise<StoreName | undefined>;
+  getStoreNameByName(clientId: string, name: string): Promise<StoreName | undefined>;
+  createStoreName(storeName: InsertStoreName): Promise<StoreName>;
+  updateStoreName(id: string, storeName: Partial<InsertStoreName>): Promise<StoreName | undefined>;
+  deleteStoreName(id: string): Promise<boolean>;
+
+  // Inventory Departments
+  getInventoryDepartments(clientId: string): Promise<InventoryDepartment[]>;
+  getInventoryDepartment(id: string): Promise<InventoryDepartment | undefined>;
+  getInventoryDepartmentByType(clientId: string, inventoryType: string): Promise<InventoryDepartment | undefined>;
+  getInventoryDepartmentsByTypes(clientId: string, inventoryTypes: string[]): Promise<InventoryDepartment[]>;
+  checkInventoryDepartmentDuplicate(clientId: string, storeNameId: string, inventoryType: string, excludeId?: string): Promise<boolean>;
+  createInventoryDepartment(dept: InsertInventoryDepartment): Promise<InventoryDepartment>;
+  updateInventoryDepartment(id: string, dept: Partial<InsertInventoryDepartment>): Promise<InventoryDepartment | undefined>;
+  deleteInventoryDepartment(id: string): Promise<boolean>;
+  addPurchaseToStoreStock(clientId: string, storeDepartmentId: string, itemId: string, quantity: number, costPrice: string, date: Date): Promise<StoreStock>;
+
+  // Goods Received Notes (GRN)
+  getGoodsReceivedNotes(clientId: string, date?: Date): Promise<GoodsReceivedNote[]>;
+  getGoodsReceivedNote(id: string): Promise<GoodsReceivedNote | undefined>;
+  getGoodsReceivedNotesByDate(clientId: string, date: Date): Promise<GoodsReceivedNote[]>;
+  getDailyGRNTotal(clientId: string, date: Date): Promise<number>;
+  createGoodsReceivedNote(grn: InsertGoodsReceivedNote): Promise<GoodsReceivedNote>;
+  updateGoodsReceivedNote(id: string, grn: Partial<InsertGoodsReceivedNote>): Promise<GoodsReceivedNote | undefined>;
+  deleteGoodsReceivedNote(id: string): Promise<boolean>;
+
+  // Receivables
+  getReceivables(clientId: string, filters?: { status?: string; departmentId?: string }): Promise<Receivable[]>;
+  getReceivable(id: string): Promise<Receivable | undefined>;
+  createReceivable(receivable: InsertReceivable): Promise<Receivable>;
+  updateReceivable(id: string, receivable: Partial<InsertReceivable>): Promise<Receivable | undefined>;
+  getReceivableHistory(receivableId: string): Promise<ReceivableHistory[]>;
+  createReceivableHistory(history: InsertReceivableHistory): Promise<ReceivableHistory>;
+
+  // Surpluses
+  getSurpluses(clientId: string, filters?: { status?: string; departmentId?: string }): Promise<Surplus[]>;
+  getSurplus(id: string): Promise<Surplus | undefined>;
+  createSurplus(surplus: InsertSurplus): Promise<Surplus>;
+  updateSurplus(id: string, surplus: Partial<InsertSurplus>): Promise<Surplus | undefined>;
+  getSurplusHistory(surplusId: string): Promise<SurplusHistory[]>;
+  createSurplusHistory(history: InsertSurplusHistory): Promise<SurplusHistory>;
+
+  // SRD Transfers (unified transfer engine)
+  getSrdTransfers(clientId: string, date?: Date): Promise<SrdTransfer[]>;
+  getSrdTransfersByRefId(refId: string): Promise<SrdTransfer[]>;
+  getSrdTransfersBySrd(srdId: string, date?: Date): Promise<SrdTransfer[]>;
+  createSrdTransfer(transfer: InsertSrdTransfer): Promise<SrdTransfer>;
+  recallSrdTransfer(refId: string): Promise<boolean>;
+  generateTransferRefId(clientId: string, date: Date): Promise<string>;
+
+  // Purchase Item Events (purchase register)
+  getPurchaseItemEvent(id: string): Promise<PurchaseItemEvent | undefined>;
+  getPurchaseItemEvents(filters: { clientId: string; srdId?: string; itemId?: string; dateFrom?: Date; dateTo?: Date }): Promise<PurchaseItemEvent[]>;
+  createPurchaseItemEvent(event: InsertPurchaseItemEvent): Promise<PurchaseItemEvent>;
+  deletePurchaseItemEvent(id: string): Promise<boolean>;
+
+  // Subscriptions
+  getSubscription(organizationId: string): Promise<Subscription | undefined>;
+  getSubscriptions(): Promise<Subscription[]>;
+  createSubscription(subscription: InsertSubscription): Promise<Subscription>;
+  updateSubscription(id: string, subscription: Partial<InsertSubscription>): Promise<Subscription | undefined>;
+  findSubscriptionsByPaystackCustomer(customerCode: string): Promise<Subscription[]>;
+  findSubscriptionsByPaystackSubscription(subscriptionCode: string): Promise<Subscription[]>;
+
+  // Organizations
+  getOrganization(id: string): Promise<Organization | undefined>;
+  createOrganization(org: InsertOrganization): Promise<Organization>;
+  updateOrganization(id: string, org: Partial<InsertOrganization>): Promise<Organization | undefined>;
+  getClientCountByOrganization(organizationId: string): Promise<number>;
+  getDepartmentCountByClientAndOrganization(clientId: string, organizationId: string): Promise<number>;
+
+  // Bootstrap (transactional)
+  bootstrapOrganizationWithOwner(orgData: InsertOrganization, userData: InsertUser): Promise<{ organization: Organization; user: User; subscription: Subscription }>;
+}
+
+export class DbStorage implements IStorage {
+  // Users
+  async getUser(id: string): Promise<User | undefined> {
+    const startTime = Date.now();
+    const [user] = await db.select().from(users).where(eq(users.id, id));
+    logDbTiming("getUser", startTime, { userId: id });
+    return user;
+  }
+
+  async getUserByUsername(username: string): Promise<User | undefined> {
+    const startTime = Date.now();
+    // Case-insensitive username lookup
+    const normalizedUsername = username.trim().toLowerCase();
+    const [user] = await db.select().from(users).where(
+      sql`LOWER(${users.username}) = ${normalizedUsername}`
+    );
+    logDbTiming("getUserByUsername", startTime, { username: normalizedUsername });
+    return user;
+  }
+
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    const startTime = Date.now();
+    // Case-insensitive email lookup
+    const normalizedEmail = email.trim().toLowerCase();
+    const [user] = await db.select().from(users).where(
+      sql`LOWER(${users.email}) = ${normalizedEmail}`
+    );
+    logDbTiming("getUserByEmail", startTime, { email: normalizedEmail });
+    return user;
+  }
+
+  async getUserByVerificationToken(token: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.verificationToken, token));
+    return user;
+  }
+
+  async getUserByResetToken(token: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.passwordResetToken, token));
+    return user;
+  }
+
+  async getUsers(filters?: { role?: string; status?: string; search?: string }): Promise<User[]> {
+    let conditions = [];
+
+    if (filters?.role) {
+      conditions.push(eq(users.role, filters.role));
+    }
+    if (filters?.status) {
+      conditions.push(eq(users.status, filters.status));
+    }
+    if (filters?.search) {
+      conditions.push(or(
+        ilike(users.fullName, `%${filters.search}%`),
+        ilike(users.email, `%${filters.search}%`),
+        ilike(users.username, `%${filters.search}%`)
+      ));
+    }
+
+    if (conditions.length > 0) {
+      return db.select().from(users).where(and(...conditions)).orderBy(desc(users.createdAt));
+    }
+    return db.select().from(users).orderBy(desc(users.createdAt));
+  }
+
+  async getUsersByOrganization(organizationId: string, filters?: { roles?: string[] }): Promise<User[]> {
+    const conditions = [eq(users.organizationId, organizationId)];
+
+    if (filters?.roles && filters.roles.length > 0) {
+      conditions.push(inArray(users.role, filters.roles));
+    }
+
+    return db.select().from(users).where(and(...conditions)).orderBy(desc(users.createdAt));
+  }
+
+  async getUserCount(): Promise<number> {
+    const result = await db.select({ count: count() }).from(users);
+    return result[0]?.count || 0;
+  }
+
+  async getSuperAdminCount(): Promise<number> {
+    const result = await db.select({ count: count() }).from(users).where(eq(users.role, "super_admin"));
+    return result[0]?.count || 0;
+  }
+
+  async createUser(insertUser: InsertUser): Promise<User> {
+    const id = randomUUID();
+    await db.insert(users).values({ ...insertUser, id, accessScope: insertUser.accessScope as any });
+    const [user] = await db.select().from(users).where(eq(users.id, id));
+    return user;
+  }
+
+  async updateUser(id: string, updateData: Partial<InsertUser>): Promise<User | undefined> {
+    await db.update(users).set({ ...updateData, updatedAt: new Date() }).where(eq(users.id, id));
+    const [user] = await db.select().from(users).where(eq(users.id, id));
+    return user;
+  }
+
+  async deleteUser(id: string): Promise<boolean> {
+    await db.delete(users).where(eq(users.id, id));
+    return true;
+  }
+
+  // Clients
+  async getClients(organizationId?: string): Promise<Client[]> {
+    const startTime = Date.now();
+    let result: Client[];
+    if (organizationId) {
+      result = await db.select().from(clients)
+        .where(eq(clients.organizationId, organizationId))
+        .orderBy(desc(clients.createdAt));
+    } else {
+      result = await db.select().from(clients).orderBy(desc(clients.createdAt));
+    }
+    logDbTiming("getClients", startTime, { organizationId, count: result.length });
+    return result;
+  }
+
+  async getClient(id: string): Promise<Client | undefined> {
+    const [client] = await db.select().from(clients).where(eq(clients.id, id));
+    return client;
+  }
+
+  async getClientWithOrgCheck(id: string, organizationId: string): Promise<Client | undefined> {
+    const [client] = await db.select().from(clients)
+      .where(and(eq(clients.id, id), eq(clients.organizationId, organizationId)));
+    return client;
+  }
+
+  async createClient(insertClient: InsertClient): Promise<Client> {
+    const id = randomUUID();
+    await db.insert(clients).values({ ...insertClient, id });
+    const [client] = await db.select().from(clients).where(eq(clients.id, id));
+    return client;
+  }
+
+  async updateClient(id: string, updateData: Partial<InsertClient>): Promise<Client | undefined> {
+    await db.update(clients).set(updateData).where(eq(clients.id, id));
+    const [client] = await db.select().from(clients).where(eq(clients.id, id));
+    return client;
+  }
+
+  async deleteClient(id: string): Promise<boolean> {
+    await db.delete(clients).where(eq(clients.id, id));
+    return true;
+  }
+
+  // Categories
+  async getCategories(clientId: string): Promise<Category[]> {
+    return db.select().from(categories)
+      .where(and(eq(categories.clientId, clientId), sql`${categories.deletedAt} IS NULL`))
+      .orderBy(categories.name);
+  }
+
+  async getAllCategories(): Promise<Category[]> {
+    return db.select().from(categories)
+      .where(sql`${categories.deletedAt} IS NULL`)
+      .orderBy(categories.name);
+  }
+
+  async getCategory(id: string): Promise<Category | undefined> {
+    const [category] = await db.select().from(categories).where(eq(categories.id, id));
+    return category;
+  }
+
+  async createCategory(insertCategory: InsertCategory): Promise<Category> {
+    const id = randomUUID();
+    await db.insert(categories).values({ ...insertCategory, id });
+    const [category] = await db.select().from(categories).where(eq(categories.id, id));
+    return category;
+  }
+
+  async updateCategory(id: string, updateData: Partial<InsertCategory>): Promise<Category | undefined> {
+    await db.update(categories).set(updateData).where(eq(categories.id, id));
+    const [category] = await db.select().from(categories).where(eq(categories.id, id));
+    return category;
+  }
+
+  async softDeleteCategory(id: string, deletedBy: string): Promise<Category | undefined> {
+    await db.update(categories)
+      .set({ deletedAt: new Date(), deletedBy })
+      .where(eq(categories.id, id));
+    const [category] = await db.select().from(categories).where(eq(categories.id, id));
+    return category;
+  }
+
+  async deleteCategory(id: string): Promise<boolean> {
+    // Set categoryId to null for all departments in this category before deleting
+    await db.update(departments).set({ categoryId: null }).where(eq(departments.categoryId, id));
+    await db.delete(categories).where(eq(categories.id, id));
+    return true;
+  }
+
+  // Organization Settings
+  async getOrganizationSettings(organizationId: string): Promise<OrganizationSettings | undefined> {
+    const startTime = Date.now();
+    const [settings] = await db.select().from(organizationSettings)
+      .where(eq(organizationSettings.organizationId, organizationId));
+    logDbTiming("getOrganizationSettings", startTime, { organizationId });
+    return settings;
+  }
+
+  async upsertOrganizationSettings(organizationId: string, data: Partial<InsertOrganizationSettings>): Promise<OrganizationSettings> {
+    const startTime = Date.now();
+    // Use proper UPSERT via onConflictDoUpdate (Postgres)
+    await db.insert(organizationSettings)
+      .values({
+        ...data,
+        organizationId,
+        updatedAt: new Date()
+      } as InsertOrganizationSettings)
+      .onConflictDoUpdate({
+        target: organizationSettings.organizationId,
+        set: {
+          ...data,
+          updatedAt: new Date()
+        }
+      });
+    // Fetch after upsert
+    const [result] = await db.select().from(organizationSettings).where(eq(organizationSettings.organizationId, organizationId));
+    logDbTiming("upsertOrganizationSettings", startTime, { organizationId });
+    return result;
+  }
+
+  // User Settings
+  async getUserSettings(userId: string): Promise<UserSettings | undefined> {
+    const [settings] = await db.select().from(userSettings)
+      .where(eq(userSettings.userId, userId));
+    return settings;
+  }
+
+  async upsertUserSettings(userId: string, data: Partial<InsertUserSettings>): Promise<UserSettings> {
+    const existing = await this.getUserSettings(userId);
+    if (existing) {
+      await db.update(userSettings)
+        .set({ ...data, updatedAt: new Date() })
+        .where(eq(userSettings.id, existing.id));
+      const [updated] = await db.select().from(userSettings).where(eq(userSettings.id, existing.id));
+      return updated;
+    } else {
+      const id = randomUUID();
+      await db.insert(userSettings).values({
+        ...data,
+        id,
+        userId
+      } as InsertUserSettings);
+      const [created] = await db.select().from(userSettings).where(eq(userSettings.id, id));
+      return created;
+    }
+  }
+
+  // Notifications
+  async getNotifications(organizationId: string, userId?: string, limit: number = 20): Promise<Notification[]> {
+    const conditions = [eq(notifications.organizationId, organizationId)];
+    if (userId) {
+      conditions.push(or(eq(notifications.userId, userId), sql`${notifications.userId} IS NULL`)!);
+    }
+    return db.select().from(notifications)
+      .where(and(...conditions))
+      .orderBy(desc(notifications.createdAt))
+      .limit(limit);
+  }
+
+  async getUnreadNotificationCount(organizationId: string, userId?: string): Promise<number> {
+    const conditions = [
+      eq(notifications.organizationId, organizationId),
+      eq(notifications.isRead, false)
+    ];
+    if (userId) {
+      conditions.push(or(eq(notifications.userId, userId), sql`${notifications.userId} IS NULL`)!);
+    }
+    const [result] = await db.select({ count: count() }).from(notifications)
+      .where(and(...conditions));
+    return result?.count || 0;
+  }
+
+  async createNotification(data: InsertNotification): Promise<Notification> {
+    const id = randomUUID();
+    await db.insert(notifications).values({ ...data, id });
+    const [notification] = await db.select().from(notifications).where(eq(notifications.id, id));
+    return notification;
+  }
+
+  async markNotificationRead(id: string, organizationId: string): Promise<boolean> {
+    const result = await db.update(notifications)
+      .set({ isRead: true })
+      .where(and(eq(notifications.id, id), eq(notifications.organizationId, organizationId)));
+    return true;
+  }
+
+  async markAllNotificationsRead(organizationId: string, userId?: string): Promise<boolean> {
+    const conditions = [eq(notifications.organizationId, organizationId)];
+    if (userId) {
+      conditions.push(or(eq(notifications.userId, userId), sql`${notifications.userId} IS NULL`)!);
+    }
+    await db.update(notifications)
+      .set({ isRead: true })
+      .where(and(...conditions));
+    return true;
+  }
+
+  async updateNotificationEmailStatus(id: string, sent: boolean, error?: string): Promise<void> {
+    await db.update(notifications)
+      .set({
+        emailSent: sent,
+        emailSentAt: sent ? new Date() : undefined,
+        emailError: error
+      })
+      .where(eq(notifications.id, id));
+  }
+
+  // Data Exports
+  async getDataExports(organizationId: string): Promise<DataExport[]> {
+    return db.select().from(dataExports)
+      .where(eq(dataExports.organizationId, organizationId))
+      .orderBy(desc(dataExports.createdAt));
+  }
+
+  async getDataExport(id: string, organizationId: string): Promise<DataExport | undefined> {
+    const [result] = await db.select().from(dataExports)
+      .where(and(eq(dataExports.id, id), eq(dataExports.organizationId, organizationId)));
+    return result;
+  }
+
+  async createDataExport(data: InsertDataExport): Promise<DataExport> {
+    const id = randomUUID();
+    await db.insert(dataExports).values({ ...data, id });
+    const [result] = await db.select().from(dataExports).where(eq(dataExports.id, id));
+    return result;
+  }
+
+  async updateDataExport(id: string, data: Partial<InsertDataExport>): Promise<DataExport> {
+    await db.update(dataExports)
+      .set(data)
+      .where(eq(dataExports.id, id));
+    const [result] = await db.select().from(dataExports).where(eq(dataExports.id, id));
+    return result;
+  }
+
+  // Departments
+  async getDepartments(clientId: string): Promise<Department[]> {
+    return db.select().from(departments).where(eq(departments.clientId, clientId)).orderBy(departments.name);
+  }
+
+  async getDepartmentsByCategory(categoryId: string): Promise<Department[]> {
+    return db.select().from(departments).where(eq(departments.categoryId, categoryId)).orderBy(departments.name);
+  }
+
+  async getAllDepartments(): Promise<Department[]> {
+    return db.select().from(departments).orderBy(departments.name);
+  }
+
+  async getDepartmentsByOrganization(organizationId: string): Promise<Department[]> {
+    return db.select({ department: departments })
+      .from(departments)
+      .innerJoin(clients, eq(departments.clientId, clients.id))
+      .where(eq(clients.organizationId, organizationId))
+      .orderBy(departments.name)
+      .then(results => results.map(r => r.department));
+  }
+
+  async getCategoriesByOrganization(organizationId: string): Promise<Category[]> {
+    return db.select({ category: categories })
+      .from(categories)
+      .innerJoin(clients, eq(categories.clientId, clients.id))
+      .where(and(eq(clients.organizationId, organizationId), sql`${categories.deletedAt} IS NULL`))
+      .orderBy(categories.name)
+      .then(results => results.map(r => r.category));
+  }
+
+  async getDepartment(id: string): Promise<Department | undefined> {
+    const [department] = await db.select().from(departments).where(eq(departments.id, id));
+    return department;
+  }
+
+  async createDepartment(insertDepartment: InsertDepartment): Promise<Department> {
+    const id = randomUUID();
+    await db.insert(departments).values({ ...insertDepartment, id });
+    const [department] = await db.select().from(departments).where(eq(departments.id, id));
+    return department;
+  }
+
+  async createDepartmentsBulk(insertDepartments: InsertDepartment[]): Promise<Department[]> {
+    if (insertDepartments.length === 0) return [];
+    const departmentsWithIds = insertDepartments.map(d => ({ ...d, id: randomUUID() }));
+    await db.insert(departments).values(departmentsWithIds);
+    const ids = departmentsWithIds.map(d => d.id);
+    return db.select().from(departments).where(inArray(departments.id, ids));
+  }
+
+  async updateDepartment(id: string, updateData: Partial<InsertDepartment>): Promise<Department | undefined> {
+    await db.update(departments).set(updateData).where(eq(departments.id, id));
+    const [department] = await db.select().from(departments).where(eq(departments.id, id));
+    return department;
+  }
+
+  async deleteDepartment(id: string): Promise<boolean> {
+    await db.delete(departments).where(eq(departments.id, id));
+    return true;
+  }
+
+  async checkDepartmentUsage(id: string): Promise<boolean> {
+    const [salesUsage] = await db.select({ count: count() }).from(salesEntries).where(eq(salesEntries.departmentId, id));
+    if ((salesUsage?.count || 0) > 0) return true;
+
+    const [stockCountUsage] = await db.select({ count: count() }).from(stockCounts).where(eq(stockCounts.departmentId, id));
+    if ((stockCountUsage?.count || 0) > 0) return true;
+
+    const [reconUsage] = await db.select({ count: count() }).from(reconciliations).where(eq(reconciliations.departmentId, id));
+    if ((reconUsage?.count || 0) > 0) return true;
+
+    const [exceptionUsage] = await db.select({ count: count() }).from(exceptions).where(eq(exceptions.departmentId, id));
+    if ((exceptionUsage?.count || 0) > 0) return true;
+
+    const [purchaseUsage] = await db.select({ count: count() }).from(purchases).where(eq(purchases.departmentId, id));
+    if ((purchaseUsage?.count || 0) > 0) return true;
+
+    const [movementUsage] = await db.select({ count: count() }).from(stockMovements).where(eq(stockMovements.departmentId, id));
+    if ((movementUsage?.count || 0) > 0) return true;
+
+    return false;
+  }
+
+  async checkDepartmentNameExists(clientId: string, name: string, excludeId?: string): Promise<boolean> {
+    const conditions = [
+      eq(departments.clientId, clientId),
+      sql`LOWER(${departments.name}) = LOWER(${name})`
+    ];
+
+    if (excludeId) {
+      conditions.push(sql`${departments.id} != ${excludeId}`);
+    }
+
+    const [result] = await db.select({ count: count() }).from(departments).where(and(...conditions));
+    return (result?.count || 0) > 0;
+  }
+
+  // Suppliers
+  async getSuppliers(clientId: string): Promise<Supplier[]> {
+    return db.select().from(suppliers).where(eq(suppliers.clientId, clientId)).orderBy(desc(suppliers.createdAt));
+  }
+
+  async getSupplier(id: string): Promise<Supplier | undefined> {
+    const [supplier] = await db.select().from(suppliers).where(eq(suppliers.id, id));
+    return supplier;
+  }
+
+  async createSupplier(insertSupplier: InsertSupplier): Promise<Supplier> {
+    const id = randomUUID();
+    await db.insert(suppliers).values({ ...insertSupplier, id });
+    const [supplier] = await db.select().from(suppliers).where(eq(suppliers.id, id));
+    return supplier;
+  }
+
+  async updateSupplier(id: string, updateData: Partial<InsertSupplier>): Promise<Supplier | undefined> {
+    await db.update(suppliers).set(updateData).where(eq(suppliers.id, id));
+    const [supplier] = await db.select().from(suppliers).where(eq(suppliers.id, id));
+    return supplier;
+  }
+
+  async deleteSupplier(id: string): Promise<boolean> {
+    await db.delete(suppliers).where(eq(suppliers.id, id));
+    return true;
+  }
+
+  // Items
+  async getItems(clientId: string): Promise<Item[]> {
+    return db.select().from(items).where(eq(items.clientId, clientId)).orderBy(desc(items.createdAt));
+  }
+
+  async getItem(id: string): Promise<Item | undefined> {
+    const [item] = await db.select().from(items).where(eq(items.id, id));
+    return item;
+  }
+
+  async createItem(insertItem: InsertItem): Promise<Item> {
+    const client = await this.getClient(insertItem.clientId);
+    if (!client) throw new Error("Client not found");
+
+    const initials = client.name
+      .split(" ")
+      .map((word) => word[0])
+      .join("")
+      .toUpperCase();
+
+    const categoryPrefix = (insertItem.category || "GEN")
+      .substring(0, 3)
+      .toUpperCase();
+
+    // Query entire database (including archived/deleted if they existed, though here we just query all items)
+    // The requirement says "highest numerical value ever assigned to that specific client"
+    const clientItems = await db.select({ sku: items.sku })
+      .from(items)
+      .where(eq(items.clientId, insertItem.clientId));
+
+    let maxSerial = 0;
+    clientItems.forEach(item => {
+      if (item.sku) {
+        const parts = item.sku.split("-");
+        const serialStr = parts[parts.length - 1];
+        const serialNum = parseInt(serialStr);
+        if (!isNaN(serialNum) && serialNum > maxSerial) {
+          maxSerial = serialNum;
+        }
+      }
+    });
+
+    const nextSerial = (maxSerial + 1).toString().padStart(4, "0");
+    const generatedSku = `${initials}-${categoryPrefix}-${nextSerial}`;
+
+    const id = randomUUID();
+    await db.insert(items).values({
+      ...insertItem,
+      id,
+      sku: generatedSku
+    });
+    const [item] = await db.select().from(items).where(eq(items.id, id));
+
+    // Log the creation for audit trail
+    try {
+      await this.createAuditLog({
+        userId: insertItem.clientId,
+        action: "Created Item",
+        entity: "Item",
+        entityId: item.id,
+        details: `Generated SKU: ${generatedSku}`
+      });
+    } catch (e) {
+      console.error("Failed to create audit log for item creation:", e);
+    }
+
+    return item;
+  }
+
+  async updateItem(id: string, updateData: Partial<InsertItem>): Promise<Item | undefined> {
+    await db.update(items).set(updateData).where(eq(items.id, id));
+    const [item] = await db.select().from(items).where(eq(items.id, id));
+    return item;
+  }
+
+  async deleteItem(id: string): Promise<boolean> {
+    await db.delete(items).where(eq(items.id, id));
+    return true;
+  }
+
+  // Purchase Lines
+  async getPurchaseLines(purchaseId: string): Promise<PurchaseLine[]> {
+    return db.select().from(purchaseLines).where(eq(purchaseLines.purchaseId, purchaseId));
+  }
+
+  async createPurchaseLine(line: InsertPurchaseLine): Promise<PurchaseLine> {
+    const id = randomUUID();
+    await db.insert(purchaseLines).values({ ...line, id });
+    const [result] = await db.select().from(purchaseLines).where(eq(purchaseLines.id, id));
+    return result;
+  }
+
+  async deletePurchaseLines(purchaseId: string): Promise<boolean> {
+    await db.delete(purchaseLines).where(eq(purchaseLines.purchaseId, purchaseId));
+    return true;
+  }
+
+  // Stock Counts
+  async getStockCounts(departmentId: string, date?: Date): Promise<StockCount[]> {
+    if (date) {
+      const startOfDay = new Date(date);
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date(date);
+      endOfDay.setHours(23, 59, 59, 999);
+
+      return db.select().from(stockCounts).where(
+        and(
+          eq(stockCounts.departmentId, departmentId),
+          gte(stockCounts.date, startOfDay),
+          lte(stockCounts.date, endOfDay)
+        )
+      ).orderBy(desc(stockCounts.createdAt));
+    }
+    return db.select().from(stockCounts).where(eq(stockCounts.departmentId, departmentId)).orderBy(desc(stockCounts.createdAt));
+  }
+
+  async getStockCount(id: string): Promise<StockCount | undefined> {
+    const [stockCount] = await db.select().from(stockCounts).where(eq(stockCounts.id, id));
+    return stockCount;
+  }
+
+  async getExistingStockCount(clientId: string, departmentId: string, itemId: string, startOfDay: Date, endOfDay: Date): Promise<StockCount | undefined> {
+    const [stockCount] = await db.select().from(stockCounts).where(
+      and(
+        eq(stockCounts.clientId, clientId),
+        eq(stockCounts.departmentId, departmentId),
+        eq(stockCounts.itemId, itemId),
+        gte(stockCounts.date, startOfDay),
+        lte(stockCounts.date, endOfDay)
+      )
+    );
+    return stockCount;
+  }
+
+  async createStockCount(stockCount: InsertStockCount): Promise<StockCount> {
+    const id = randomUUID();
+    await db.insert(stockCounts).values({ ...stockCount, id });
+    const [result] = await db.select().from(stockCounts).where(eq(stockCounts.id, id));
+    return result;
+  }
+
+  async updateStockCount(id: string, updateData: Partial<InsertStockCount>): Promise<StockCount | undefined> {
+    await db.update(stockCounts).set(updateData).where(eq(stockCounts.id, id));
+    const [result] = await db.select().from(stockCounts).where(eq(stockCounts.id, id));
+    return result;
+  }
+
+  async deleteStockCount(id: string): Promise<boolean> {
+    await db.delete(stockCounts).where(eq(stockCounts.id, id));
+    return true;
+  }
+
+  // Sales
+  async getSalesEntries(departmentId: string, startDate?: Date, endDate?: Date): Promise<SalesEntry[]> {
+    if (startDate && endDate) {
+      return db.select().from(salesEntries).where(
+        and(
+          eq(salesEntries.departmentId, departmentId),
+          gte(salesEntries.date, startDate),
+          lte(salesEntries.date, endDate)
+        )
+      ).orderBy(desc(salesEntries.date));
+    }
+
+    return db.select().from(salesEntries).where(eq(salesEntries.departmentId, departmentId)).orderBy(desc(salesEntries.date));
+  }
+
+  async getSalesEntriesByClient(clientId: string, startDate?: Date, endDate?: Date): Promise<SalesEntry[]> {
+    if (startDate && endDate) {
+      return db.select().from(salesEntries).where(
+        and(
+          eq(salesEntries.clientId, clientId),
+          gte(salesEntries.date, startDate),
+          lte(salesEntries.date, endDate)
+        )
+      ).orderBy(desc(salesEntries.date));
+    }
+
+    return db.select().from(salesEntries).where(eq(salesEntries.clientId, clientId)).orderBy(desc(salesEntries.date));
+  }
+
+  async getAllSalesEntries(): Promise<SalesEntry[]> {
+    return db.select().from(salesEntries).orderBy(desc(salesEntries.date));
+  }
+
+  async getSalesEntry(id: string): Promise<SalesEntry | undefined> {
+    const [entry] = await db.select().from(salesEntries).where(eq(salesEntries.id, id));
+    return entry;
+  }
+
+  async createSalesEntry(entry: InsertSalesEntry): Promise<SalesEntry> {
+    const id = randomUUID();
+    await db.insert(salesEntries).values({ ...entry, id });
+    const [result] = await db.select().from(salesEntries).where(eq(salesEntries.id, id));
+    return result;
+  }
+
+  async updateSalesEntry(id: string, updateData: Partial<InsertSalesEntry>): Promise<SalesEntry | undefined> {
+    await db.update(salesEntries).set(updateData).where(eq(salesEntries.id, id));
+    const [result] = await db.select().from(salesEntries).where(eq(salesEntries.id, id));
+    return result;
+  }
+
+  async deleteSalesEntry(id: string): Promise<boolean> {
+    await db.delete(salesEntries).where(eq(salesEntries.id, id));
+    return true;
+  }
+
+  // Purchases
+  async getPurchases(clientId: string): Promise<Purchase[]> {
+    return db.select().from(purchases).where(eq(purchases.clientId, clientId)).orderBy(desc(purchases.createdAt));
+  }
+
+  async getPurchasesByDepartment(departmentId: string): Promise<Purchase[]> {
+    return db.select().from(purchases).where(eq(purchases.departmentId, departmentId)).orderBy(desc(purchases.createdAt));
+  }
+
+  async getAllPurchases(): Promise<Purchase[]> {
+    return db.select().from(purchases).orderBy(desc(purchases.createdAt));
+  }
+
+  async getPurchasesByOrganization(organizationId: string): Promise<Purchase[]> {
+    const result = await db
+      .select({ purchase: purchases })
+      .from(purchases)
+      .innerJoin(clients, eq(purchases.clientId, clients.id))
+      .where(eq(clients.organizationId, organizationId))
+      .orderBy(desc(purchases.createdAt));
+    return result.map(r => r.purchase);
+  }
+
+  async getPurchase(id: string): Promise<Purchase | undefined> {
+    const [purchase] = await db.select().from(purchases).where(eq(purchases.id, id));
+    return purchase;
+  }
+
+  async createPurchase(purchase: InsertPurchase): Promise<Purchase> {
+    const id = randomUUID();
+    await db.insert(purchases).values({ ...purchase, id });
+    const [result] = await db.select().from(purchases).where(eq(purchases.id, id));
+    return result;
+  }
+
+  async updatePurchase(id: string, updateData: Partial<InsertPurchase>): Promise<Purchase | undefined> {
+    await db.update(purchases).set(updateData).where(eq(purchases.id, id));
+    const [result] = await db.select().from(purchases).where(eq(purchases.id, id));
+    return result;
+  }
+
+  async deletePurchase(id: string): Promise<boolean> {
+    await db.delete(purchases).where(eq(purchases.id, id));
+    return true;
+  }
+
+  // Stock Movements
+  async getStockMovements(clientId: string): Promise<StockMovement[]> {
+    return db.select().from(stockMovements).where(eq(stockMovements.clientId, clientId)).orderBy(desc(stockMovements.createdAt));
+  }
+
+  async getStockMovementsByDepartment(departmentId: string): Promise<StockMovement[]> {
+    return db.select().from(stockMovements).where(eq(stockMovements.departmentId, departmentId)).orderBy(desc(stockMovements.createdAt));
+  }
+
+  async createStockMovement(movement: InsertStockMovement): Promise<StockMovement> {
+    const id = randomUUID();
+    await db.insert(stockMovements).values({ ...movement, id });
+    const [result] = await db.select().from(stockMovements).where(eq(stockMovements.id, id));
+    return result;
+  }
+
+  async getStockMovement(id: string): Promise<StockMovement | undefined> {
+    const [movement] = await db.select().from(stockMovements).where(eq(stockMovements.id, id));
+    return movement;
+  }
+
+  async updateStockMovement(id: string, updateData: Partial<InsertStockMovement>): Promise<StockMovement | undefined> {
+    await db.update(stockMovements).set(updateData).where(eq(stockMovements.id, id));
+    const [result] = await db.select().from(stockMovements).where(eq(stockMovements.id, id));
+    return result;
+  }
+
+  async deleteStockMovement(id: string): Promise<boolean> {
+    await db.delete(stockMovements).where(eq(stockMovements.id, id));
+    return true;
+  }
+
+  async getStockMovementsBySrd(srdId: string): Promise<StockMovement[]> {
+    return db.select().from(stockMovements).where(
+      or(
+        eq(stockMovements.fromSrdId, srdId),
+        eq(stockMovements.toSrdId, srdId)
+      )
+    ).orderBy(desc(stockMovements.createdAt));
+  }
+
+  async getStockMovementByIdempotencyKey(idempotencyKey: string): Promise<StockMovement | undefined> {
+    const [movement] = await db.select().from(stockMovements).where(eq(stockMovements.idempotencyKey, idempotencyKey));
+    return movement;
+  }
+
+  async getStockMovementWithLines(id: string): Promise<{ movement: StockMovement; lines: StockMovementLine[] } | undefined> {
+    const [movement] = await db.select().from(stockMovements).where(eq(stockMovements.id, id));
+    if (!movement) return undefined;
+    const lines = await db.select().from(stockMovementLines).where(eq(stockMovementLines.movementId, id));
+    return { movement, lines };
+  }
+
+  // Stock Movement Lines
+  async getStockMovementLines(movementId: string): Promise<StockMovementLine[]> {
+    return db.select().from(stockMovementLines).where(eq(stockMovementLines.movementId, movementId));
+  }
+
+  async createStockMovementLine(line: InsertStockMovementLine): Promise<StockMovementLine> {
+    const id = randomUUID();
+    await db.insert(stockMovementLines).values({ ...line, id });
+    const [result] = await db.select().from(stockMovementLines).where(eq(stockMovementLines.id, id));
+    return result;
+  }
+
+  async createStockMovementLinesBulk(lines: InsertStockMovementLine[]): Promise<StockMovementLine[]> {
+    if (lines.length === 0) return [];
+    const linesWithIds = lines.map(line => ({ ...line, id: randomUUID() }));
+    await db.insert(stockMovementLines).values(linesWithIds);
+    const ids = linesWithIds.map(line => line.id);
+    return db.select().from(stockMovementLines).where(inArray(stockMovementLines.id, ids));
+  }
+
+  async deleteStockMovementLines(movementId: string): Promise<boolean> {
+    await db.delete(stockMovementLines).where(eq(stockMovementLines.movementId, movementId));
+    return true;
+  }
+
+  // Reconciliations
+  async getReconciliations(departmentId: string, date?: Date): Promise<Reconciliation[]> {
+    if (date) {
+      const startOfDay = new Date(date);
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date(date);
+      endOfDay.setHours(23, 59, 59, 999);
+
+      return db.select().from(reconciliations).where(
+        and(
+          eq(reconciliations.departmentId, departmentId),
+          gte(reconciliations.date, startOfDay),
+          lte(reconciliations.date, endOfDay)
+        )
+      ).orderBy(desc(reconciliations.createdAt));
+    }
+    return db.select().from(reconciliations).where(eq(reconciliations.departmentId, departmentId)).orderBy(desc(reconciliations.createdAt));
+  }
+
+  async getReconciliationsByClient(clientId: string, startDate?: Date, endDate?: Date): Promise<Reconciliation[]> {
+    if (startDate && endDate) {
+      return db.select().from(reconciliations).where(
+        and(
+          eq(reconciliations.clientId, clientId),
+          gte(reconciliations.date, startDate),
+          lte(reconciliations.date, endDate)
+        )
+      ).orderBy(desc(reconciliations.date));
+    }
+    return db.select().from(reconciliations).where(eq(reconciliations.clientId, clientId)).orderBy(desc(reconciliations.date));
+  }
+
+  async getAllReconciliations(): Promise<Reconciliation[]> {
+    return db.select().from(reconciliations).orderBy(desc(reconciliations.createdAt));
+  }
+
+  async getReconciliationsByOrganization(organizationId: string): Promise<Reconciliation[]> {
+    const result = await db
+      .select({ reconciliation: reconciliations })
+      .from(reconciliations)
+      .innerJoin(clients, eq(reconciliations.clientId, clients.id))
+      .where(eq(clients.organizationId, organizationId))
+      .orderBy(desc(reconciliations.createdAt));
+    return result.map(r => r.reconciliation);
+  }
+
+  async getReconciliation(id: string): Promise<Reconciliation | undefined> {
+    const [reconciliation] = await db.select().from(reconciliations).where(eq(reconciliations.id, id));
+    return reconciliation;
+  }
+
+  async createReconciliation(reconciliation: InsertReconciliation): Promise<Reconciliation> {
+    const id = randomUUID();
+    await db.insert(reconciliations).values({ ...reconciliation, id });
+    const [result] = await db.select().from(reconciliations).where(eq(reconciliations.id, id));
+    return result;
+  }
+
+  async updateReconciliation(id: string, updateData: Partial<InsertReconciliation>): Promise<Reconciliation | undefined> {
+    await db.update(reconciliations).set(updateData).where(eq(reconciliations.id, id));
+    const [result] = await db.select().from(reconciliations).where(eq(reconciliations.id, id));
+    return result;
+  }
+
+  async deleteReconciliation(id: string): Promise<boolean> {
+    await db.delete(reconciliations).where(eq(reconciliations.id, id));
+    return true;
+  }
+
+  // Exceptions
+  async getExceptions(filters?: { clientId?: string; departmentId?: string; status?: string; severity?: string; includeDeleted?: boolean; organizationId?: string }): Promise<Exception[]> {
+    const conditions = [];
+
+    // By default, exclude deleted exceptions
+    if (!filters?.includeDeleted) {
+      conditions.push(sql`${exceptions.deletedAt} IS NULL`);
+    }
+
+    if (filters?.clientId) {
+      conditions.push(eq(exceptions.clientId, filters.clientId));
+    }
+    if (filters?.departmentId) {
+      conditions.push(eq(exceptions.departmentId, filters.departmentId));
+    }
+    if (filters?.status) {
+      conditions.push(eq(exceptions.status, filters.status));
+    }
+    if (filters?.severity) {
+      conditions.push(eq(exceptions.severity, filters.severity));
+    }
+
+    // If organizationId provided, filter by organization through client join
+    if (filters?.organizationId) {
+      const result = await db
+        .select({ exception: exceptions })
+        .from(exceptions)
+        .innerJoin(clients, eq(exceptions.clientId, clients.id))
+        .where(and(eq(clients.organizationId, filters.organizationId), ...conditions))
+        .orderBy(desc(exceptions.createdAt));
+      return result.map(r => r.exception);
+    }
+
+    if (conditions.length > 0) {
+      return db.select().from(exceptions).where(and(...conditions)).orderBy(desc(exceptions.createdAt));
+    }
+    return db.select().from(exceptions).orderBy(desc(exceptions.createdAt));
+  }
+
+  async getException(id: string): Promise<Exception | undefined> {
+    const [exception] = await db.select().from(exceptions).where(eq(exceptions.id, id));
+    return exception;
+  }
+
+  async getExceptionWithActivity(id: string): Promise<{ exception: Exception; activity: ExceptionActivity[] } | undefined> {
+    const [exception] = await db.select().from(exceptions).where(eq(exceptions.id, id));
+    if (!exception) return undefined;
+
+    const activity = await db.select().from(exceptionActivity)
+      .where(eq(exceptionActivity.exceptionId, id))
+      .orderBy(desc(exceptionActivity.createdAt));
+
+    return { exception, activity };
+  }
+
+  async createException(exception: InsertException): Promise<Exception> {
+    const caseNumber = await this.generateExceptionCaseNumber(exception.date);
+    const id = randomUUID();
+    await db.insert(exceptions).values({ ...exception, id, caseNumber });
+    const [result] = await db.select().from(exceptions).where(eq(exceptions.id, id));
+    return result;
+  }
+
+  async updateException(id: string, updateData: Partial<InsertException>): Promise<Exception | undefined> {
+    await db.update(exceptions)
+      .set({ ...updateData, updatedAt: new Date() })
+      .where(eq(exceptions.id, id));
+    const [result] = await db.select().from(exceptions).where(eq(exceptions.id, id));
+    return result;
+  }
+
+  async deleteException(id: string): Promise<boolean> {
+    await db.delete(exceptions).where(eq(exceptions.id, id));
+    return true;
+  }
+
+  async softDeleteException(id: string, deletedBy: string, deleteReason: string): Promise<Exception | undefined> {
+    await db.update(exceptions)
+      .set({
+        deletedAt: new Date(),
+        deletedBy,
+        deleteReason,
+        updatedAt: new Date()
+      })
+      .where(eq(exceptions.id, id));
+    const [result] = await db.select().from(exceptions).where(eq(exceptions.id, id));
+    return result;
+  }
+
+  async generateExceptionCaseNumber(dateStr?: string): Promise<string> {
+    // Use provided date or current date in YYYYMMDD format
+    const date = dateStr ? new Date(dateStr) : new Date();
+    const dateKey = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, "0")}${String(date.getDate()).padStart(2, "0")}`;
+
+    // Count existing exceptions for this date
+    const existingForDate = await db.select({ count: count() })
+      .from(exceptions)
+      .where(sql`case_number LIKE ${'EXC-' + dateKey + '-%'}`);
+
+    const nextNum = (existingForDate[0]?.count || 0) + 1;
+    return `EXC-${dateKey}-${String(nextNum).padStart(3, "0")}`;
+  }
+
+  // Exception Comments
+  async getExceptionComments(exceptionId: string): Promise<ExceptionComment[]> {
+    return db.select().from(exceptionComments).where(eq(exceptionComments.exceptionId, exceptionId)).orderBy(desc(exceptionComments.createdAt));
+  }
+
+  async createExceptionComment(insertComment: InsertExceptionComment): Promise<ExceptionComment> {
+    const id = randomUUID();
+    await db.insert(exceptionComments).values({ ...insertComment, id });
+    const [result] = await db.select().from(exceptionComments).where(eq(exceptionComments.id, id));
+    return result;
+  }
+
+  // Exception Activity
+  async getExceptionActivity(exceptionId: string): Promise<ExceptionActivity[]> {
+    return db.select().from(exceptionActivity)
+      .where(eq(exceptionActivity.exceptionId, exceptionId))
+      .orderBy(desc(exceptionActivity.createdAt));
+  }
+
+  async createExceptionActivity(insertActivity: InsertExceptionActivity): Promise<ExceptionActivity> {
+    const id = randomUUID();
+    await db.insert(exceptionActivity).values({ ...insertActivity, id });
+    const [result] = await db.select().from(exceptionActivity).where(eq(exceptionActivity.id, id));
+    return result;
+  }
+
+  // Audit Logs
+  async getAuditLogs(filters?: { limit?: number; offset?: number; userId?: string; entity?: string; startDate?: Date; endDate?: Date }): Promise<{ logs: AuditLog[]; total: number }> {
+    const conditions = [];
+
+    if (filters?.userId) {
+      conditions.push(eq(auditLogs.userId, filters.userId));
+    }
+    if (filters?.entity) {
+      conditions.push(eq(auditLogs.entity, filters.entity));
+    }
+    if (filters?.startDate) {
+      conditions.push(gte(auditLogs.createdAt, filters.startDate));
+    }
+    if (filters?.endDate) {
+      conditions.push(lte(auditLogs.createdAt, filters.endDate));
+    }
+
+    const limit = filters?.limit || 50;
+    const offset = filters?.offset || 0;
+
+    let logs: AuditLog[];
+    let totalResult: { count: number }[];
+
+    if (conditions.length > 0) {
+      logs = await db.select().from(auditLogs).where(and(...conditions)).orderBy(desc(auditLogs.createdAt)).limit(limit).offset(offset);
+      totalResult = await db.select({ count: count() }).from(auditLogs).where(and(...conditions));
+    } else {
+      logs = await db.select().from(auditLogs).orderBy(desc(auditLogs.createdAt)).limit(limit).offset(offset);
+      totalResult = await db.select({ count: count() }).from(auditLogs);
+    }
+
+    return { logs, total: totalResult[0]?.count || 0 };
+  }
+
+  async createAuditLog(insertLog: InsertAuditLog): Promise<AuditLog> {
+    const id = randomUUID();
+    await db.insert(auditLogs).values({ ...insertLog, id });
+    const [result] = await db.select().from(auditLogs).where(eq(auditLogs.id, id));
+    return result;
+  }
+
+  // Admin Activity Logs
+  async getAdminActivityLogs(filters?: { actorId?: string; targetUserId?: string; actionType?: string; startDate?: Date; endDate?: Date }): Promise<AdminActivityLog[]> {
+    const conditions = [];
+
+    if (filters?.actorId) {
+      conditions.push(eq(adminActivityLogs.actorId, filters.actorId));
+    }
+    if (filters?.targetUserId) {
+      conditions.push(eq(adminActivityLogs.targetUserId, filters.targetUserId));
+    }
+    if (filters?.actionType) {
+      conditions.push(eq(adminActivityLogs.actionType, filters.actionType));
+    }
+    if (filters?.startDate) {
+      conditions.push(gte(adminActivityLogs.createdAt, filters.startDate));
+    }
+    if (filters?.endDate) {
+      conditions.push(lte(adminActivityLogs.createdAt, filters.endDate));
+    }
+
+    if (conditions.length > 0) {
+      return db.select().from(adminActivityLogs).where(and(...conditions)).orderBy(desc(adminActivityLogs.createdAt));
+    }
+    return db.select().from(adminActivityLogs).orderBy(desc(adminActivityLogs.createdAt));
+  }
+
+  async createAdminActivityLog(insertLog: InsertAdminActivityLog): Promise<AdminActivityLog> {
+    const id = randomUUID();
+    await db.insert(adminActivityLogs).values({ ...insertLog, id });
+    const [result] = await db.select().from(adminActivityLogs).where(eq(adminActivityLogs.id, id));
+    return result;
+  }
+
+  // System Settings
+  async getSetting(key: string): Promise<any> {
+    const [setting] = await db.select().from(systemSettings).where(eq(systemSettings.key, key));
+    return setting?.value;
+  }
+
+  async setSetting(key: string, value: any, updatedBy: string): Promise<void> {
+    const existing = await this.getSetting(key);
+    if (existing !== undefined) {
+      await db.update(systemSettings).set({ value, updatedBy, updatedAt: new Date() }).where(eq(systemSettings.key, key));
+    } else {
+      await db.insert(systemSettings).values({ key, value, updatedBy });
+    }
+  }
+
+  // Dashboard
+  async getDashboardSummary(filters?: DashboardFilters): Promise<DashboardSummary> {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const endOfToday = new Date();
+    endOfToday.setHours(23, 59, 59, 999);
+
+    // CRITICAL: Get organization's clients for tenant isolation
+    let orgClientIds: string[] = [];
+    if (filters?.organizationId) {
+      const orgClients = await db.select({ id: clients.id }).from(clients)
+        .where(eq(clients.organizationId, filters.organizationId));
+      orgClientIds = orgClients.map(c => c.id);
+
+      // If organization has no clients, return zeroed metrics immediately
+      // This prevents leaking global data to new/empty organizations
+      if (orgClientIds.length === 0) {
+        const [clientsResult] = await db.select({ count: count() }).from(clients)
+          .where(eq(clients.organizationId, filters.organizationId));
+        return {
+          totalClients: clientsResult?.count || 0,
+          totalDepartments: 0,
+          totalSalesToday: 0,
+          totalPurchasesToday: 0,
+          totalSales: 0,
+          totalPurchases: 0,
+          totalExceptions: 0,
+          openExceptions: 0,
+          totalVarianceValue: 0,
+          pendingReconciliations: 0,
+          recentExceptions: [],
+          redFlags: []
+        };
+      }
+    }
+
+    // Helper to add client filter condition using inArray for proper Drizzle support
+    const getOrgClientCondition = (clientIdColumn: any) => {
+      if (filters?.clientId) {
+        return eq(clientIdColumn, filters.clientId);
+      }
+      if (orgClientIds.length > 0) {
+        return sql`${clientIdColumn} IN (${sql.join(orgClientIds.map(id => sql`${id}`), sql`, `)})`;
+      }
+      return null;
+    };
+
+    // Get total clients (for this organization only)
+    let clientConditions: any[] = [];
+    if (filters?.organizationId) {
+      clientConditions.push(eq(clients.organizationId, filters.organizationId));
+    }
+    const [clientsResult] = clientConditions.length > 0
+      ? await db.select({ count: count() }).from(clients).where(and(...clientConditions))
+      : await db.select({ count: count() }).from(clients);
+    const totalClients = clientsResult?.count || 0;
+
+    // Get total departments (with optional filters, scoped to org clients)
+    let deptConditions: any[] = [];
+    const orgClientCond = getOrgClientCondition(departments.clientId);
+    if (orgClientCond) deptConditions.push(orgClientCond);
+
+    const [deptsResult] = deptConditions.length > 0
+      ? await db.select({ count: count() }).from(departments).where(and(...deptConditions))
+      : await db.select({ count: count() }).from(departments);
+    const totalDepartments = deptsResult?.count || 0;
+
+    // Sales conditions
+    let salesConditions: any[] = [
+      gte(salesEntries.date, today),
+      lte(salesEntries.date, endOfToday)
+    ];
+    const salesOrgCond = getOrgClientCondition(salesEntries.clientId);
+    if (salesOrgCond) salesConditions.push(salesOrgCond);
+    if (filters?.departmentId) {
+      salesConditions.push(eq(salesEntries.departmentId, filters.departmentId));
+    }
+
+    // Get total sales today
+    const [salesTodayResult] = await db.select({
+      total: sum(salesEntries.totalSales)
+    }).from(salesEntries).where(and(...salesConditions));
+    const totalSalesToday = parseFloat(salesTodayResult?.total || "0");
+
+    // Get all-time sales
+    let allSalesConditions: any[] = [];
+    const allSalesOrgCond = getOrgClientCondition(salesEntries.clientId);
+    if (allSalesOrgCond) allSalesConditions.push(allSalesOrgCond);
+    if (filters?.departmentId) {
+      allSalesConditions.push(eq(salesEntries.departmentId, filters.departmentId));
+    }
+    const [allSalesResult] = allSalesConditions.length > 0
+      ? await db.select({ total: sum(salesEntries.totalSales) }).from(salesEntries).where(and(...allSalesConditions))
+      : await db.select({ total: sum(salesEntries.totalSales) }).from(salesEntries);
+    const totalSales = parseFloat(allSalesResult?.total || "0");
+
+    // Purchases conditions
+    let purchaseConditions: any[] = [
+      gte(purchases.invoiceDate, today),
+      lte(purchases.invoiceDate, endOfToday)
+    ];
+    const purchasesOrgCond = getOrgClientCondition(purchases.clientId);
+    if (purchasesOrgCond) purchaseConditions.push(purchasesOrgCond);
+    if (filters?.departmentId) {
+      purchaseConditions.push(eq(purchases.departmentId, filters.departmentId));
+    }
+
+    // Get total purchases today
+    const [purchasesTodayResult] = await db.select({
+      total: sum(purchases.totalAmount)
+    }).from(purchases).where(and(...purchaseConditions));
+    const totalPurchasesToday = parseFloat(purchasesTodayResult?.total || "0");
+
+    // Get all-time purchases
+    let allPurchaseConditions: any[] = [];
+    const allPurchasesOrgCond = getOrgClientCondition(purchases.clientId);
+    if (allPurchasesOrgCond) allPurchaseConditions.push(allPurchasesOrgCond);
+    if (filters?.departmentId) {
+      allPurchaseConditions.push(eq(purchases.departmentId, filters.departmentId));
+    }
+    const [allPurchasesResult] = allPurchaseConditions.length > 0
+      ? await db.select({ total: sum(purchases.totalAmount) }).from(purchases).where(and(...allPurchaseConditions))
+      : await db.select({ total: sum(purchases.totalAmount) }).from(purchases);
+    const totalPurchases = parseFloat(allPurchasesResult?.total || "0");
+
+    // Exception conditions (scoped to organization clients)
+    let exceptionConditions: any[] = [];
+    const exceptionsOrgCond = getOrgClientCondition(exceptions.clientId);
+    if (exceptionsOrgCond) exceptionConditions.push(exceptionsOrgCond);
+    if (filters?.departmentId) {
+      exceptionConditions.push(eq(exceptions.departmentId, filters.departmentId));
+    }
+
+    // Get exceptions counts
+    const [exceptionsResult] = exceptionConditions.length > 0
+      ? await db.select({ count: count() }).from(exceptions).where(and(...exceptionConditions))
+      : await db.select({ count: count() }).from(exceptions);
+    const totalExceptions = exceptionsResult?.count || 0;
+
+    const openConditions = [...exceptionConditions, eq(exceptions.status, "open")];
+    const [openExceptionsResult] = await db.select({ count: count() }).from(exceptions).where(and(...openConditions));
+    const openExceptions = openExceptionsResult?.count || 0;
+
+    // Reconciliation conditions (scoped to organization clients)
+    let reconConditions: any[] = [];
+    const reconOrgCond = getOrgClientCondition(reconciliations.clientId);
+    if (reconOrgCond) reconConditions.push(reconOrgCond);
+    if (filters?.departmentId) {
+      reconConditions.push(eq(reconciliations.departmentId, filters.departmentId));
+    }
+
+    // Get variance value
+    const [varianceResult] = reconConditions.length > 0
+      ? await db.select({ total: sum(reconciliations.varianceValue) }).from(reconciliations).where(and(...reconConditions))
+      : await db.select({ total: sum(reconciliations.varianceValue) }).from(reconciliations);
+    const totalVarianceValue = parseFloat(varianceResult?.total || "0");
+
+    // Get pending reconciliations
+    const pendingConditions = [...reconConditions, eq(reconciliations.status, "pending")];
+    const [pendingResult] = await db.select({ count: count() }).from(reconciliations).where(and(...pendingConditions));
+    const pendingReconciliations = pendingResult?.count || 0;
+
+    // Get recent exceptions (scoped to organization)
+    const recentExceptions = exceptionConditions.length > 0
+      ? await db.select().from(exceptions).where(and(...exceptionConditions)).orderBy(desc(exceptions.createdAt)).limit(5)
+      : await db.select().from(exceptions).orderBy(desc(exceptions.createdAt)).limit(5);
+
+    // Generate red flags based on data
+    const redFlags: { type: string; message: string; severity: string }[] = [];
+
+    if (openExceptions > 5) {
+      redFlags.push({
+        type: "exceptions",
+        message: `${openExceptions} open exceptions require attention`,
+        severity: "high"
+      });
+    }
+
+    if (pendingReconciliations > 0) {
+      redFlags.push({
+        type: "reconciliation",
+        message: `${pendingReconciliations} reconciliations pending review`,
+        severity: "medium"
+      });
+    }
+
+    if (Math.abs(totalVarianceValue) > 10000) {
+      redFlags.push({
+        type: "variance",
+        message: `High variance detected: ₦${Math.abs(totalVarianceValue).toLocaleString()}`,
+        severity: "high"
+      });
+    }
+
+    return {
+      totalClients,
+      totalDepartments,
+      totalSalesToday,
+      totalPurchasesToday,
+      totalSales,
+      totalPurchases,
+      totalExceptions,
+      openExceptions,
+      totalVarianceValue,
+      pendingReconciliations,
+      recentExceptions,
+      redFlags
+    };
+  }
+
+  // Payment Declarations
+  async getPaymentDeclaration(clientId: string, departmentId: string, date: Date): Promise<PaymentDeclaration | undefined> {
+    const startOfDay = new Date(date);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(date);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const [declaration] = await db.select().from(paymentDeclarations).where(
+      and(
+        eq(paymentDeclarations.clientId, clientId),
+        eq(paymentDeclarations.departmentId, departmentId),
+        gte(paymentDeclarations.date, startOfDay),
+        lte(paymentDeclarations.date, endOfDay)
+      )
+    );
+    return declaration;
+  }
+
+  async getPaymentDeclarationById(id: string): Promise<PaymentDeclaration | undefined> {
+    const [declaration] = await db.select().from(paymentDeclarations).where(eq(paymentDeclarations.id, id));
+    return declaration;
+  }
+
+  async getPaymentDeclarations(departmentId: string, startDate?: Date, endDate?: Date): Promise<PaymentDeclaration[]> {
+    if (startDate && endDate) {
+      return db.select().from(paymentDeclarations).where(
+        and(
+          eq(paymentDeclarations.departmentId, departmentId),
+          gte(paymentDeclarations.date, startDate),
+          lte(paymentDeclarations.date, endDate)
+        )
+      ).orderBy(desc(paymentDeclarations.date));
+    }
+    return db.select().from(paymentDeclarations).where(eq(paymentDeclarations.departmentId, departmentId)).orderBy(desc(paymentDeclarations.date));
+  }
+
+  async createPaymentDeclaration(insertDeclaration: InsertPaymentDeclaration): Promise<PaymentDeclaration> {
+    // Calculate total
+    const total = (parseFloat(insertDeclaration.reportedCash || "0") +
+      parseFloat(insertDeclaration.reportedPosSettlement || "0") +
+      parseFloat(insertDeclaration.reportedTransfers || "0")).toString();
+
+    const id = randomUUID();
+    await db.insert(paymentDeclarations).values({
+      ...insertDeclaration,
+      id,
+      totalReported: total,
+      supportingDocuments: (insertDeclaration.supportingDocuments as any) || [],
+    });
+    const [result] = await db.select().from(paymentDeclarations).where(eq(paymentDeclarations.id, id));
+    return result;
+  }
+
+  async updatePaymentDeclaration(id: string, updateData: Partial<InsertPaymentDeclaration>): Promise<PaymentDeclaration | undefined> {
+    // Recalculate total if any amount field is updated
+    const existing = await this.getPaymentDeclarationById(id);
+    if (!existing) return undefined;
+
+    const cash = updateData.reportedCash !== undefined ? updateData.reportedCash : existing.reportedCash;
+    const pos = updateData.reportedPosSettlement !== undefined ? updateData.reportedPosSettlement : existing.reportedPosSettlement;
+    const transfers = updateData.reportedTransfers !== undefined ? updateData.reportedTransfers : existing.reportedTransfers;
+
+    const total = (parseFloat(cash || "0") + parseFloat(pos || "0") + parseFloat(transfers || "0")).toString();
+
+    await db.update(paymentDeclarations).set({
+      ...updateData,
+      ...updateData,
+      totalReported: total,
+      supportingDocuments: updateData.supportingDocuments ? (updateData.supportingDocuments as any) : undefined,
+      updatedAt: new Date()
+    }).where(eq(paymentDeclarations.id, id));
+    const [result] = await db.select().from(paymentDeclarations).where(eq(paymentDeclarations.id, id));
+    return result;
+  }
+
+  async deletePaymentDeclaration(id: string): Promise<boolean> {
+    await db.delete(paymentDeclarations).where(eq(paymentDeclarations.id, id));
+    return true;
+  }
+
+  // Sales summary for reconciliation
+  async getSalesSummaryForDepartment(departmentId: string, date: Date): Promise<{ totalCash: number; totalPos: number; totalTransfer: number; totalSales: number }> {
+    const startOfDay = new Date(date);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(date);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const [result] = await db.select({
+      totalCash: sum(salesEntries.cashAmount),
+      totalPos: sum(salesEntries.posAmount),
+      totalTransfer: sum(salesEntries.transferAmount),
+      totalSales: sum(salesEntries.totalSales)
+    }).from(salesEntries).where(
+      and(
+        eq(salesEntries.departmentId, departmentId),
+        gte(salesEntries.date, startOfDay),
+        lte(salesEntries.date, endOfDay)
+      )
+    );
+
+    return {
+      totalCash: parseFloat(result?.totalCash || "0"),
+      totalPos: parseFloat(result?.totalPos || "0"),
+      totalTransfer: parseFloat(result?.totalTransfer || "0"),
+      totalSales: parseFloat(result?.totalSales || "0")
+    };
+  }
+
+  async getSalesSummaryForClient(clientId: string, date: Date, departmentId?: string): Promise<{ totalAmount: number; totalComplimentary: number; totalVouchers: number; totalVoids: number; totalOthers: number; totalCash: number; totalPos: number; totalTransfer: number; grandTotal: number; entriesCount: number; departmentsCount: number; avgPerEntry: number }> {
+    const startOfDay = new Date(date);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(date);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const conditions = [
+      eq(salesEntries.clientId, clientId),
+      gte(salesEntries.date, startOfDay),
+      lte(salesEntries.date, endOfDay)
+    ];
+
+    if (departmentId) {
+      conditions.push(eq(salesEntries.departmentId, departmentId));
+    }
+
+    const [result] = await db.select({
+      totalAmount: sum(salesEntries.amount),
+      totalComplimentary: sum(salesEntries.complimentaryAmount),
+      totalVouchers: sum(salesEntries.vouchersAmount),
+      totalVoids: sum(salesEntries.voidsAmount),
+      totalOthers: sum(salesEntries.othersAmount),
+      totalCash: sum(salesEntries.cashAmount),
+      totalPos: sum(salesEntries.posAmount),
+      totalTransfer: sum(salesEntries.transferAmount),
+      grandTotal: sum(salesEntries.totalSales),
+      entriesCount: count(salesEntries.id),
+      departmentsCount: countDistinct(salesEntries.departmentId)
+    }).from(salesEntries).where(and(...conditions));
+
+    const entriesCount = parseInt(result?.entriesCount?.toString() || "0");
+    const grandTotal = parseFloat(result?.grandTotal || "0");
+
+    return {
+      totalAmount: parseFloat(result?.totalAmount || "0"),
+      totalComplimentary: parseFloat(result?.totalComplimentary || "0"),
+      totalVouchers: parseFloat(result?.totalVouchers || "0"),
+      totalVoids: parseFloat(result?.totalVoids || "0"),
+      totalOthers: parseFloat(result?.totalOthers || "0"),
+      totalCash: parseFloat(result?.totalCash || "0"),
+      totalPos: parseFloat(result?.totalPos || "0"),
+      totalTransfer: parseFloat(result?.totalTransfer || "0"),
+      grandTotal,
+      entriesCount,
+      departmentsCount: parseInt(result?.departmentsCount?.toString() || "0"),
+      avgPerEntry: entriesCount > 0 ? grandTotal / entriesCount : 0
+    };
+  }
+
+  async getDepartmentComparison(clientId: string, date: Date): Promise<Array<{
+    departmentId: string;
+    departmentName: string;
+    totalCaptured: number;
+    totalDeclared: number;
+    auditTotal: number;
+    variance1stHit: number;
+    variance2ndHit: number;
+    finalVariance: number;
+    varianceStatus: "shortage" | "surplus" | "balanced";
+  }>> {
+    const startOfDay = new Date(date);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(date);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const clientDepts = await db.select().from(departments).where(eq(departments.clientId, clientId));
+
+    const results = await Promise.all(clientDepts.map(async (dept) => {
+      const [salesResult] = await db.select({
+        totalSales: sum(salesEntries.totalSales)
+      }).from(salesEntries).where(
+        and(
+          eq(salesEntries.departmentId, dept.id),
+          gte(salesEntries.date, startOfDay),
+          lte(salesEntries.date, endOfDay)
+        )
+      );
+      const totalCaptured = parseFloat(salesResult?.totalSales || "0");
+
+      const [declaredResult] = await db.select({
+        totalReported: sum(paymentDeclarations.totalReported)
+      }).from(paymentDeclarations).where(
+        and(
+          eq(paymentDeclarations.departmentId, dept.id),
+          gte(paymentDeclarations.date, startOfDay),
+          lte(paymentDeclarations.date, endOfDay)
+        )
+      );
+      const totalDeclared = parseFloat(declaredResult?.totalReported || "0");
+
+      // Get auditTotal from SRD Department Store ledger
+      // Use stock_counts to find which store stock records belong to this department
+      // Stock counts are created with departmentId (regular) and link to store_stock via clientId, itemId, date
+      const stockCountsForDept = await db.select({
+        itemId: stockCounts.itemId,
+        openingQty: stockCounts.openingQty,
+        addedQty: stockCounts.addedQty,
+        actualClosingQty: stockCounts.actualClosingQty
+      }).from(stockCounts).where(
+        and(
+          eq(stockCounts.clientId, clientId),
+          eq(stockCounts.departmentId, dept.id),
+          gte(stockCounts.date, startOfDay),
+          lte(stockCounts.date, endOfDay)
+        )
+      );
+
+      // Track items already counted to avoid duplicates
+      const countedItems = new Set<string>();
+      let auditTotal = 0;
+
+      for (const sc of stockCountsForDept) {
+        // Skip if we already counted this item (prevent duplicates)
+        if (countedItems.has(sc.itemId)) continue;
+        countedItems.add(sc.itemId);
+
+        const opening = parseFloat(sc.openingQty || "0");
+        const added = parseFloat(sc.addedQty || "0");
+        const closing = parseFloat(sc.actualClosingQty || "0");
+        const sold = (opening + added) - closing;
+
+        // Get the item's selling price
+        const [item] = await db.select({ sellingPrice: items.sellingPrice })
+          .from(items).where(eq(items.id, sc.itemId));
+        const sellingPrice = parseFloat(item?.sellingPrice || "0");
+
+        auditTotal += sold * sellingPrice;
+      }
+
+      const variance1stHit = totalDeclared - totalCaptured;
+      const variance2ndHit = auditTotal - totalCaptured;
+      const finalVariance = totalDeclared - auditTotal;
+
+      let varianceStatus: "shortage" | "surplus" | "balanced" = "balanced";
+      if (finalVariance < -0.01) {
+        varianceStatus = "shortage";
+      } else if (finalVariance > 0.01) {
+        varianceStatus = "surplus";
+      }
+
+      return {
+        departmentId: dept.id,
+        departmentName: dept.name,
+        totalCaptured,
+        totalDeclared,
+        auditTotal,
+        variance1stHit,
+        variance2ndHit,
+        finalVariance,
+        varianceStatus
+      };
+    }));
+
+    return results;
+  }
+
+  // User-Client Access
+  async getUserClientAccess(userId: string, clientId: string): Promise<UserClientAccess | undefined> {
+    const [access] = await db.select().from(userClientAccess).where(
+      and(
+        eq(userClientAccess.userId, userId),
+        eq(userClientAccess.clientId, clientId)
+      )
+    );
+    return access;
+  }
+
+  async getUserClientAccessList(userId: string): Promise<UserClientAccess[]> {
+    return db.select().from(userClientAccess).where(eq(userClientAccess.userId, userId));
+  }
+
+  async getClientUserAccessList(clientId: string): Promise<UserClientAccess[]> {
+    return db.select().from(userClientAccess).where(eq(userClientAccess.clientId, clientId));
+  }
+
+  async createUserClientAccess(insertAccess: InsertUserClientAccess): Promise<UserClientAccess> {
+    const id = randomUUID();
+    await db.insert(userClientAccess).values({ ...insertAccess, id });
+    const [result] = await db.select().from(userClientAccess).where(eq(userClientAccess.id, id));
+    return result;
+  }
+
+  async updateUserClientAccess(id: string, updateData: Partial<InsertUserClientAccess>): Promise<UserClientAccess | undefined> {
+    await db.update(userClientAccess).set({
+      ...updateData,
+      updatedAt: new Date()
+    }).where(eq(userClientAccess.id, id));
+    const [result] = await db.select().from(userClientAccess).where(eq(userClientAccess.id, id));
+    return result;
+  }
+
+  async deleteUserClientAccess(id: string): Promise<boolean> {
+    await db.delete(userClientAccess).where(eq(userClientAccess.id, id));
+    return true;
+  }
+
+  async getAssignedClientsForUser(userId: string): Promise<Client[]> {
+    const accessRecords = await db.select().from(userClientAccess).where(
+      and(
+        eq(userClientAccess.userId, userId),
+        eq(userClientAccess.status, "assigned")
+      )
+    );
+
+    if (accessRecords.length === 0) return [];
+
+    const clientIds = accessRecords.map(a => a.clientId);
+    return db.select().from(clients).where(
+      sql`${clients.id} IN (${sql.join(clientIds.map(id => sql`${id}`), sql`, `)})`
+    );
+  }
+
+  // Audit Contexts
+  async getActiveAuditContext(userId: string): Promise<AuditContext | undefined> {
+    const [context] = await db.select().from(auditContexts).where(
+      and(
+        eq(auditContexts.userId, userId),
+        eq(auditContexts.status, "active")
+      )
+    ).orderBy(desc(auditContexts.createdAt)).limit(1);
+    return context;
+  }
+
+  async getAuditContext(id: string): Promise<AuditContext | undefined> {
+    const [context] = await db.select().from(auditContexts).where(eq(auditContexts.id, id));
+    return context;
+  }
+
+  async createAuditContext(insertContext: InsertAuditContext): Promise<AuditContext> {
+    await db.update(auditContexts).set({ status: "cleared" }).where(
+      and(
+        eq(auditContexts.userId, insertContext.userId),
+        eq(auditContexts.status, "active")
+      )
+    );
+    const id = randomUUID();
+    await db.insert(auditContexts).values({ ...insertContext, id });
+    const [result] = await db.select().from(auditContexts).where(eq(auditContexts.id, id));
+    return result;
+  }
+
+  async updateAuditContext(id: string, updateData: Partial<InsertAuditContext>): Promise<AuditContext | undefined> {
+    await db.update(auditContexts).set({
+      ...updateData,
+      lastActiveAt: new Date()
+    }).where(eq(auditContexts.id, id));
+    const [result] = await db.select().from(auditContexts).where(eq(auditContexts.id, id));
+    return result;
+  }
+
+  async clearAuditContext(userId: string): Promise<boolean> {
+    await db.update(auditContexts).set({ status: "cleared" }).where(
+      and(
+        eq(auditContexts.userId, userId),
+        eq(auditContexts.status, "active")
+      )
+    );
+    return true;
+  }
+
+  // Audits
+  async getAudit(id: string): Promise<Audit | undefined> {
+    const [audit] = await db.select().from(audits).where(eq(audits.id, id));
+    return audit;
+  }
+
+  async getAuditByPeriod(clientId: string, departmentId: string, startDate: Date, endDate: Date): Promise<Audit | undefined> {
+    const [audit] = await db.select().from(audits).where(
+      and(
+        eq(audits.clientId, clientId),
+        eq(audits.departmentId, departmentId),
+        eq(audits.startDate, startDate),
+        eq(audits.endDate, endDate)
+      )
+    );
+    return audit;
+  }
+
+  async getAudits(filters?: { clientId?: string; departmentId?: string; status?: string }): Promise<Audit[]> {
+    let conditions = [];
+    if (filters?.clientId) conditions.push(eq(audits.clientId, filters.clientId));
+    if (filters?.departmentId) conditions.push(eq(audits.departmentId, filters.departmentId));
+    if (filters?.status) conditions.push(eq(audits.status, filters.status));
+
+    if (conditions.length > 0) {
+      return db.select().from(audits).where(and(...conditions)).orderBy(desc(audits.createdAt));
+    }
+    return db.select().from(audits).orderBy(desc(audits.createdAt));
+  }
+
+  async createAudit(insertAudit: InsertAudit): Promise<Audit> {
+    const id = randomUUID();
+    await db.insert(audits).values({ ...insertAudit, id });
+    const [result] = await db.select().from(audits).where(eq(audits.id, id));
+    return result;
+  }
+
+  async updateAudit(id: string, updateData: Partial<InsertAudit>): Promise<Audit | undefined> {
+    await db.update(audits).set({
+      ...updateData,
+      updatedAt: new Date()
+    }).where(eq(audits.id, id));
+    const [result] = await db.select().from(audits).where(eq(audits.id, id));
+    return result;
+  }
+
+  async submitAudit(id: string, submittedBy: string): Promise<Audit | undefined> {
+    await db.update(audits).set({
+      status: "submitted",
+      submittedBy,
+      submittedAt: new Date(),
+      updatedAt: new Date()
+    }).where(eq(audits.id, id));
+    const [result] = await db.select().from(audits).where(eq(audits.id, id));
+    return result;
+  }
+
+  async lockAudit(id: string, lockedBy: string): Promise<Audit | undefined> {
+    await db.update(audits).set({
+      status: "locked",
+      lockedBy,
+      lockedAt: new Date(),
+      updatedAt: new Date()
+    }).where(eq(audits.id, id));
+    const [result] = await db.select().from(audits).where(eq(audits.id, id));
+    return result;
+  }
+
+  // Audit Reissue Permissions
+  async getAuditReissuePermission(auditId: string, userId: string): Promise<AuditReissuePermission | undefined> {
+    const now = new Date();
+    const [permission] = await db.select().from(auditReissuePermissions).where(
+      and(
+        eq(auditReissuePermissions.auditId, auditId),
+        eq(auditReissuePermissions.grantedTo, userId),
+        eq(auditReissuePermissions.active, true),
+        or(
+          sql`${auditReissuePermissions.expiresAt} IS NULL`,
+          gte(auditReissuePermissions.expiresAt, now)
+        )
+      )
+    );
+    return permission;
+  }
+
+  async getAuditReissuePermissions(auditId: string): Promise<AuditReissuePermission[]> {
+    return db.select().from(auditReissuePermissions).where(eq(auditReissuePermissions.auditId, auditId));
+  }
+
+  async createAuditReissuePermission(insertPermission: InsertAuditReissuePermission): Promise<AuditReissuePermission> {
+    const id = randomUUID();
+    await db.insert(auditReissuePermissions).values({ ...insertPermission, id });
+    const [result] = await db.select().from(auditReissuePermissions).where(eq(auditReissuePermissions.id, id));
+    return result;
+  }
+
+  async revokeAuditReissuePermission(id: string): Promise<boolean> {
+    await db.update(auditReissuePermissions).set({ active: false }).where(eq(auditReissuePermissions.id, id));
+    return true;
+  }
+
+  // Audit Change Log
+  async createAuditChangeLog(insertLog: InsertAuditChangeLog): Promise<AuditChangeLog> {
+    const id = randomUUID();
+    await db.insert(auditChangeLog).values({ ...insertLog, id });
+    const [result] = await db.select().from(auditChangeLog).where(eq(auditChangeLog.id, id));
+    return result;
+  }
+
+  async getAuditChangeLogs(auditId: string): Promise<AuditChangeLog[]> {
+    return db.select().from(auditChangeLog).where(eq(auditChangeLog.auditId, auditId)).orderBy(desc(auditChangeLog.createdAt));
+  }
+
+  // Store Issues
+  async getStoreIssues(clientId: string, date?: Date): Promise<StoreIssue[]> {
+    if (date) {
+      const startOfDay = new Date(date);
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date(date);
+      endOfDay.setHours(23, 59, 59, 999);
+      return db.select().from(storeIssues)
+        .where(and(
+          eq(storeIssues.clientId, clientId),
+          gte(storeIssues.issueDate, startOfDay),
+          lte(storeIssues.issueDate, endOfDay)
+        ))
+        .orderBy(desc(storeIssues.createdAt));
+    }
+    return db.select().from(storeIssues).where(eq(storeIssues.clientId, clientId)).orderBy(desc(storeIssues.createdAt));
+  }
+
+  async getStoreIssue(id: string): Promise<StoreIssue | undefined> {
+    const [issue] = await db.select().from(storeIssues).where(eq(storeIssues.id, id));
+    return issue;
+  }
+
+  async getStoreIssuesByDepartment(toDepartmentId: string, date?: Date): Promise<StoreIssue[]> {
+    if (date) {
+      const startOfDay = new Date(date);
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date(date);
+      endOfDay.setHours(23, 59, 59, 999);
+      return db.select().from(storeIssues).where(
+        and(
+          eq(storeIssues.toDepartmentId, toDepartmentId),
+          gte(storeIssues.issueDate, startOfDay),
+          lte(storeIssues.issueDate, endOfDay)
+        )
+      ).orderBy(desc(storeIssues.createdAt));
+    }
+    return db.select().from(storeIssues).where(eq(storeIssues.toDepartmentId, toDepartmentId)).orderBy(desc(storeIssues.createdAt));
+  }
+
+  async createStoreIssue(insertIssue: InsertStoreIssue): Promise<StoreIssue> {
+    const id = randomUUID();
+    await db.insert(storeIssues).values({ ...insertIssue, id });
+    const [result] = await db.select().from(storeIssues).where(eq(storeIssues.id, id));
+    return result;
+  }
+
+  async updateStoreIssue(id: string, updateData: Partial<InsertStoreIssue>): Promise<StoreIssue | undefined> {
+    await db.update(storeIssues).set(updateData).where(eq(storeIssues.id, id));
+    const [result] = await db.select().from(storeIssues).where(eq(storeIssues.id, id));
+    return result;
+  }
+
+  async deleteStoreIssue(id: string): Promise<boolean> {
+    await db.delete(storeIssueLines).where(eq(storeIssueLines.storeIssueId, id));
+    await db.delete(storeIssues).where(eq(storeIssues.id, id));
+    return true;
+  }
+
+  // Store Issue Lines
+  async getStoreIssueLines(storeIssueId: string): Promise<StoreIssueLine[]> {
+    return db.select().from(storeIssueLines).where(eq(storeIssueLines.storeIssueId, storeIssueId));
+  }
+
+  async createStoreIssueLine(insertLine: InsertStoreIssueLine): Promise<StoreIssueLine> {
+    const id = randomUUID();
+    await db.insert(storeIssueLines).values({ ...insertLine, id });
+    const [result] = await db.select().from(storeIssueLines).where(eq(storeIssueLines.id, id));
+    return result;
+  }
+
+  async createStoreIssueLinesBulk(insertLines: InsertStoreIssueLine[]): Promise<StoreIssueLine[]> {
+    if (insertLines.length === 0) return [];
+    const linesWithIds = insertLines.map(line => ({ ...line, id: randomUUID() }));
+    await db.insert(storeIssueLines).values(linesWithIds);
+    const ids = linesWithIds.map(line => line.id);
+    return db.select().from(storeIssueLines).where(inArray(storeIssueLines.id, ids));
+  }
+
+  async deleteStoreIssueLines(storeIssueId: string): Promise<boolean> {
+    await db.delete(storeIssueLines).where(eq(storeIssueLines.storeIssueId, storeIssueId));
+    return true;
+  }
+
+  async getIssuedQtyForDepartment(departmentId: string, itemId: string, date: Date): Promise<number> {
+    const startOfDay = new Date(date);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(date);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const result = await db
+      .select({ totalQty: sum(storeIssueLines.qtyIssued) })
+      .from(storeIssueLines)
+      .innerJoin(storeIssues, eq(storeIssueLines.storeIssueId, storeIssues.id))
+      .where(
+        and(
+          eq(storeIssues.toDepartmentId, departmentId),
+          eq(storeIssueLines.itemId, itemId),
+          gte(storeIssues.issueDate, startOfDay),
+          lte(storeIssues.issueDate, endOfDay),
+          eq(storeIssues.status, "posted")
+        )
+      );
+
+    return parseFloat(result[0]?.totalQty || "0");
+  }
+
+  // Store Stock
+  async getStoreStock(clientId: string, storeDepartmentId: string, date?: Date): Promise<StoreStock[]> {
+    if (date) {
+      const startOfDay = new Date(date);
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date(date);
+      endOfDay.setHours(23, 59, 59, 999);
+      return db.select().from(storeStock).where(
+        and(
+          eq(storeStock.clientId, clientId),
+          eq(storeStock.storeDepartmentId, storeDepartmentId),
+          gte(storeStock.date, startOfDay),
+          lte(storeStock.date, endOfDay)
+        )
+      );
+    }
+    return db.select().from(storeStock).where(
+      and(
+        eq(storeStock.clientId, clientId),
+        eq(storeStock.storeDepartmentId, storeDepartmentId)
+      )
+    );
+  }
+
+  async getStoreStockById(id: string): Promise<StoreStock | undefined> {
+    const [stock] = await db.select().from(storeStock).where(eq(storeStock.id, id));
+    return stock;
+  }
+
+  async getStoreStockByItem(storeDepartmentId: string, itemId: string, date: Date): Promise<StoreStock | undefined> {
+    const startOfDay = new Date(date);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(date);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const [stock] = await db.select().from(storeStock).where(
+      and(
+        eq(storeStock.storeDepartmentId, storeDepartmentId),
+        eq(storeStock.itemId, itemId),
+        gte(storeStock.date, startOfDay),
+        lte(storeStock.date, endOfDay)
+      )
+    );
+    return stock;
+  }
+
+  async getPreviousDayClosing(storeDepartmentId: string, itemId: string, date: Date): Promise<string> {
+    // Use the new backward search function
+    const result = await this.getLatestClosingBeforeDate(storeDepartmentId, itemId, date);
+    return result.closing;
+  }
+
+  async getLatestClosingBeforeDate(storeDepartmentId: string, itemId: string, date: Date): Promise<{ closing: string; sourceDate: string | null }> {
+    const targetDate = new Date(date);
+    targetDate.setHours(0, 0, 0, 0);
+
+    // Search backward for the most recent record before the target date
+    const [prevStock] = await db.select().from(storeStock).where(
+      and(
+        eq(storeStock.storeDepartmentId, storeDepartmentId),
+        eq(storeStock.itemId, itemId),
+        lt(storeStock.date, targetDate)
+      )
+    ).orderBy(desc(storeStock.date)).limit(1);
+
+    if (prevStock) {
+      const closing = prevStock.physicalClosingQty !== null && prevStock.physicalClosingQty !== undefined
+        ? prevStock.physicalClosingQty
+        : prevStock.closingQty || "0";
+      const sourceDate = prevStock.date instanceof Date
+        ? prevStock.date.toISOString().split('T')[0]
+        : String(prevStock.date).split('T')[0];
+      console.log(`[Carry-over] SRD ${storeDepartmentId}, Item ${itemId}: Opening from ${sourceDate} closing = ${closing}`);
+      return { closing, sourceDate };
+    }
+
+    console.log(`[Carry-over] SRD ${storeDepartmentId}, Item ${itemId}: No previous record found, using 0`);
+    return { closing: "0", sourceDate: null };
+  }
+
+  async createStoreStock(insertStock: InsertStoreStock): Promise<StoreStock> {
+    const id = randomUUID();
+    await db.insert(storeStock).values({ ...insertStock, id });
+    const [result] = await db.select().from(storeStock).where(eq(storeStock.id, id));
+    return result;
+  }
+
+  async updateStoreStock(id: string, updateData: Partial<InsertStoreStock>): Promise<StoreStock | undefined> {
+    await db.update(storeStock).set({
+      ...updateData,
+      updatedAt: new Date()
+    }).where(eq(storeStock.id, id));
+    const [result] = await db.select().from(storeStock).where(eq(storeStock.id, id));
+    return result;
+  }
+
+  async upsertStoreStock(insertStock: InsertStoreStock): Promise<StoreStock> {
+    const existing = await this.getStoreStockByItem(
+      insertStock.storeDepartmentId,
+      insertStock.itemId,
+      insertStock.date
+    );
+
+    if (existing) {
+
+
+      await db.update(storeStock).set({
+        openingQty: insertStock.openingQty,
+        addedQty: insertStock.addedQty,
+        issuedQty: insertStock.issuedQty,
+        transfersInQty: insertStock.transfersInQty,
+        transfersOutQty: insertStock.transfersOutQty,
+        interDeptInQty: insertStock.interDeptInQty,
+        interDeptOutQty: insertStock.interDeptOutQty,
+        wasteQty: insertStock.wasteQty,
+        writeOffQty: insertStock.writeOffQty,
+        adjustmentQty: insertStock.adjustmentQty,
+        soldQty: insertStock.soldQty,
+        closingQty: insertStock.closingQty,
+        physicalClosingQty: insertStock.physicalClosingQty,
+        varianceQty: insertStock.varianceQty,
+        costPriceSnapshot: insertStock.costPriceSnapshot,
+        updatedAt: new Date()
+      }).where(eq(storeStock.id, existing.id));
+      const [res] = await db.select().from(storeStock).where(eq(storeStock.id, existing.id));
+      return res;
+    }
+
+    return this.createStoreStock(insertStock);
+  }
+
+  // Store Names
+  async getStoreNamesByClient(clientId: string): Promise<StoreName[]> {
+    return db.select().from(storeNames)
+      .where(eq(storeNames.clientId, clientId))
+      .orderBy(storeNames.name);
+  }
+
+  async getStoreName(id: string): Promise<StoreName | undefined> {
+    const [storeName] = await db.select().from(storeNames).where(eq(storeNames.id, id));
+    return storeName;
+  }
+
+  async getStoreNameByName(clientId: string, name: string): Promise<StoreName | undefined> {
+    const [storeName] = await db.select().from(storeNames)
+      .where(and(
+        eq(storeNames.clientId, clientId),
+        eq(storeNames.name, name)
+      ));
+    return storeName;
+  }
+
+  async createStoreName(insertStoreName: InsertStoreName): Promise<StoreName> {
+    const id = randomUUID();
+    await db.insert(storeNames).values({ ...insertStoreName, id });
+    const [result] = await db.select().from(storeNames).where(eq(storeNames.id, id));
+    return result;
+  }
+
+  async updateStoreName(id: string, updateData: Partial<InsertStoreName>): Promise<StoreName | undefined> {
+    await db.update(storeNames).set(updateData).where(eq(storeNames.id, id));
+    const [result] = await db.select().from(storeNames).where(eq(storeNames.id, id));
+    return result;
+  }
+
+  async deleteStoreName(id: string): Promise<boolean> {
+    await db.delete(storeNames).where(eq(storeNames.id, id));
+    return true;
+  }
+
+  // Inventory Departments
+  async getInventoryDepartments(clientId: string): Promise<InventoryDepartment[]> {
+    return db.select().from(inventoryDepartments).where(eq(inventoryDepartments.clientId, clientId));
+  }
+
+  async getInventoryDepartment(id: string): Promise<InventoryDepartment | undefined> {
+    const [dept] = await db.select().from(inventoryDepartments).where(eq(inventoryDepartments.id, id));
+    return dept;
+  }
+
+  async getInventoryDepartmentByType(clientId: string, inventoryType: string): Promise<InventoryDepartment | undefined> {
+    const [dept] = await db.select().from(inventoryDepartments).where(
+      and(
+        eq(inventoryDepartments.clientId, clientId),
+        eq(inventoryDepartments.inventoryType, inventoryType)
+      )
+    );
+    return dept;
+  }
+
+  async checkInventoryDepartmentDuplicate(clientId: string, storeNameId: string, inventoryType: string, excludeId?: string): Promise<boolean> {
+    let conditions = [
+      eq(inventoryDepartments.clientId, clientId),
+      eq(inventoryDepartments.storeNameId, storeNameId),
+      eq(inventoryDepartments.inventoryType, inventoryType)
+    ];
+
+    if (excludeId) {
+      const result = await db.select().from(inventoryDepartments).where(
+        and(...conditions, sql`${inventoryDepartments.id} != ${excludeId}`)
+      );
+      return result.length > 0;
+    }
+
+    const result = await db.select().from(inventoryDepartments).where(and(...conditions));
+    return result.length > 0;
+  }
+
+  async createInventoryDepartment(insertDept: InsertInventoryDepartment): Promise<InventoryDepartment> {
+    const id = randomUUID();
+    await db.insert(inventoryDepartments).values({ ...insertDept, id });
+    const [result] = await db.select().from(inventoryDepartments).where(eq(inventoryDepartments.id, id));
+    return result;
+  }
+
+  async updateInventoryDepartment(id: string, updateData: Partial<InsertInventoryDepartment>): Promise<InventoryDepartment | undefined> {
+    await db.update(inventoryDepartments).set(updateData).where(eq(inventoryDepartments.id, id));
+    const [result] = await db.select().from(inventoryDepartments).where(eq(inventoryDepartments.id, id));
+    return result;
+  }
+
+  async deleteInventoryDepartment(id: string): Promise<boolean> {
+    await db.delete(inventoryDepartments).where(eq(inventoryDepartments.id, id));
+    return true;
+  }
+
+  async getInventoryDepartmentsByTypes(clientId: string, inventoryTypes: string[]): Promise<InventoryDepartment[]> {
+    if (inventoryTypes.length === 0) return [];
+
+    const typeConditions = inventoryTypes.map(t => eq(inventoryDepartments.inventoryType, t));
+    return db.select().from(inventoryDepartments).where(
+      and(
+        eq(inventoryDepartments.clientId, clientId),
+        or(...typeConditions)
+      )
+    );
+  }
+
+  // SRD Category Assignments
+  async getInventoryDepartmentCategories(inventoryDepartmentId: string): Promise<InventoryDepartmentCategory[]> {
+    return db.select().from(inventoryDepartmentCategories).where(
+      eq(inventoryDepartmentCategories.inventoryDepartmentId, inventoryDepartmentId)
+    );
+  }
+
+  async replaceInventoryDepartmentCategories(
+    clientId: string,
+    inventoryDepartmentId: string,
+    categoryIds: string[]
+  ): Promise<InventoryDepartmentCategory[]> {
+    // Delete existing assignments for this inventory department
+    await db.delete(inventoryDepartmentCategories).where(
+      eq(inventoryDepartmentCategories.inventoryDepartmentId, inventoryDepartmentId)
+    );
+
+    // Insert new assignments
+    if (categoryIds.length === 0) return [];
+
+    const insertValues = categoryIds.map(categoryId => ({
+      clientId,
+      inventoryDepartmentId,
+      categoryId,
+      id: randomUUID()
+    }));
+
+    await db.insert(inventoryDepartmentCategories).values(insertValues);
+    const ids = insertValues.map(v => v.id);
+    return db.select().from(inventoryDepartmentCategories).where(inArray(inventoryDepartmentCategories.id, ids));
+  }
+
+  async getItemsForInventoryDepartment(inventoryDepartmentId: string): Promise<Item[]> {
+    // Get category IDs assigned to this inventory department
+    const assignments = await this.getInventoryDepartmentCategories(inventoryDepartmentId);
+
+    if (assignments.length === 0) {
+      // No categories assigned - return all items for the client
+      const invDept = await this.getInventoryDepartment(inventoryDepartmentId);
+      if (!invDept) return [];
+      return db.select().from(items).where(eq(items.clientId, invDept.clientId));
+    }
+
+    // Return only items matching the assigned categories
+    const categoryIds = assignments.map(a => a.categoryId);
+    const categoryConditions = categoryIds.map(cId => eq(items.categoryId, cId));
+    return db.select().from(items).where(or(...categoryConditions));
+  }
+
+  async addPurchaseToStoreStock(clientId: string, storeDepartmentId: string, itemId: string, quantity: number, costPrice: string, date: Date): Promise<StoreStock> {
+    const existing = await this.getStoreStockByItem(storeDepartmentId, itemId, date);
+
+    if (existing) {
+      const currentAddedQty = parseFloat(existing.addedQty || "0");
+      const newAddedQty = (currentAddedQty + quantity).toString();
+      const currentClosing = parseFloat(existing.closingQty || "0");
+      const newClosing = (currentClosing + quantity).toString();
+
+      await db.update(storeStock).set({
+        addedQty: newAddedQty,
+        closingQty: newClosing,
+        costPriceSnapshot: costPrice,
+        updatedAt: new Date()
+      }).where(eq(storeStock.id, existing.id));
+      const [updated] = await db.select().from(storeStock).where(eq(storeStock.id, existing.id));
+      return updated;
+    }
+
+    return this.createStoreStock({
+      clientId,
+      storeDepartmentId,
+      itemId,
+      date,
+      openingQty: "0",
+      addedQty: quantity.toString(),
+      issuedQty: "0",
+      closingQty: quantity.toString(),
+      physicalClosingQty: null,
+      varianceQty: null,
+      costPriceSnapshot: costPrice
+    });
+  }
+
+  // Goods Received Notes (GRN)
+  async getGoodsReceivedNotes(clientId: string, date?: Date): Promise<GoodsReceivedNote[]> {
+    if (date) {
+      const startOfDay = new Date(date);
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date(date);
+      endOfDay.setHours(23, 59, 59, 999);
+      return db.select().from(goodsReceivedNotes)
+        .where(and(
+          eq(goodsReceivedNotes.clientId, clientId),
+          gte(goodsReceivedNotes.date, startOfDay),
+          lte(goodsReceivedNotes.date, endOfDay)
+        ))
+        .orderBy(desc(goodsReceivedNotes.date));
+    }
+    return db.select().from(goodsReceivedNotes)
+      .where(eq(goodsReceivedNotes.clientId, clientId))
+      .orderBy(desc(goodsReceivedNotes.date));
+  }
+
+  async getGoodsReceivedNote(id: string): Promise<GoodsReceivedNote | undefined> {
+    const [grn] = await db.select().from(goodsReceivedNotes).where(eq(goodsReceivedNotes.id, id));
+    return grn;
+  }
+
+  async getGoodsReceivedNotesByDate(clientId: string, date: Date): Promise<GoodsReceivedNote[]> {
+    const startOfDay = new Date(date);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(date);
+    endOfDay.setHours(23, 59, 59, 999);
+    return db.select().from(goodsReceivedNotes)
+      .where(and(
+        eq(goodsReceivedNotes.clientId, clientId),
+        gte(goodsReceivedNotes.date, startOfDay),
+        lte(goodsReceivedNotes.date, endOfDay)
+      ))
+      .orderBy(desc(goodsReceivedNotes.createdAt));
+  }
+
+  async getDailyGRNTotal(clientId: string, date: Date): Promise<number> {
+    const startOfDay = new Date(date);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(date);
+    endOfDay.setHours(23, 59, 59, 999);
+    const result = await db.select({ total: sum(goodsReceivedNotes.amount) })
+      .from(goodsReceivedNotes)
+      .where(and(
+        eq(goodsReceivedNotes.clientId, clientId),
+        gte(goodsReceivedNotes.date, startOfDay),
+        lte(goodsReceivedNotes.date, endOfDay)
+      ));
+    return parseFloat(result[0]?.total || "0");
+  }
+
+  async createGoodsReceivedNote(insertGrn: InsertGoodsReceivedNote): Promise<GoodsReceivedNote> {
+    const id = randomUUID();
+    await db.insert(goodsReceivedNotes).values({ ...insertGrn, id });
+    const [result] = await db.select().from(goodsReceivedNotes).where(eq(goodsReceivedNotes.id, id));
+    return result;
+  }
+
+  async updateGoodsReceivedNote(id: string, updateData: Partial<InsertGoodsReceivedNote>): Promise<GoodsReceivedNote | undefined> {
+    await db.update(goodsReceivedNotes)
+      .set({ ...updateData, updatedAt: new Date() })
+      .where(eq(goodsReceivedNotes.id, id));
+    const [result] = await db.select().from(goodsReceivedNotes).where(eq(goodsReceivedNotes.id, id));
+    return result;
+  }
+
+  async deleteGoodsReceivedNote(id: string): Promise<boolean> {
+    await db.delete(goodsReceivedNotes).where(eq(goodsReceivedNotes.id, id));
+    return true;
+  }
+
+  // Receivables
+  async getReceivables(clientId: string, filters?: { status?: string; departmentId?: string }): Promise<Receivable[]> {
+    let conditions = [eq(receivables.clientId, clientId)];
+    if (filters?.status) {
+      conditions.push(eq(receivables.status, filters.status));
+    }
+    if (filters?.departmentId) {
+      conditions.push(eq(receivables.departmentId, filters.departmentId));
+    }
+    return db.select().from(receivables)
+      .where(and(...conditions))
+      .orderBy(desc(receivables.auditDate));
+  }
+
+  async getReceivable(id: string): Promise<Receivable | undefined> {
+    const [receivable] = await db.select().from(receivables).where(eq(receivables.id, id));
+    return receivable;
+  }
+
+  async createReceivable(insertReceivable: InsertReceivable): Promise<Receivable> {
+    const id = randomUUID();
+    await db.insert(receivables).values({ ...insertReceivable, id });
+    const [result] = await db.select().from(receivables).where(eq(receivables.id, id));
+    return result;
+  }
+
+  async updateReceivable(id: string, updateData: Partial<InsertReceivable>): Promise<Receivable | undefined> {
+    await db.update(receivables)
+      .set({ ...updateData, updatedAt: new Date() })
+      .where(eq(receivables.id, id));
+    const [result] = await db.select().from(receivables).where(eq(receivables.id, id));
+    return result;
+  }
+
+  async getReceivableHistory(receivableId: string): Promise<ReceivableHistory[]> {
+    return db.select().from(receivableHistory)
+      .where(eq(receivableHistory.receivableId, receivableId))
+      .orderBy(desc(receivableHistory.createdAt));
+  }
+
+  async createReceivableHistory(insertHistory: InsertReceivableHistory): Promise<ReceivableHistory> {
+    const id = randomUUID();
+    await db.insert(receivableHistory).values({ ...insertHistory, id });
+    const [result] = await db.select().from(receivableHistory).where(eq(receivableHistory.id, id));
+    return result;
+  }
+
+  // Surpluses
+  async getSurpluses(clientId: string, filters?: { status?: string; departmentId?: string }): Promise<Surplus[]> {
+    let conditions = [eq(surpluses.clientId, clientId)];
+    if (filters?.status) {
+      conditions.push(eq(surpluses.status, filters.status));
+    }
+    if (filters?.departmentId) {
+      conditions.push(eq(surpluses.departmentId, filters.departmentId));
+    }
+    return db.select().from(surpluses)
+      .where(and(...conditions))
+      .orderBy(desc(surpluses.auditDate));
+  }
+
+  async getSurplus(id: string): Promise<Surplus | undefined> {
+    const [surplus] = await db.select().from(surpluses).where(eq(surpluses.id, id));
+    return surplus;
+  }
+
+  async createSurplus(insertSurplus: InsertSurplus): Promise<Surplus> {
+    const id = randomUUID();
+    await db.insert(surpluses).values({ ...insertSurplus, id });
+    const [result] = await db.select().from(surpluses).where(eq(surpluses.id, id));
+    return result;
+  }
+
+  async updateSurplus(id: string, updateData: Partial<InsertSurplus>): Promise<Surplus | undefined> {
+    await db.update(surpluses)
+      .set({ ...updateData, updatedAt: new Date() })
+      .where(eq(surpluses.id, id));
+    const [result] = await db.select().from(surpluses).where(eq(surpluses.id, id));
+    return result;
+  }
+
+  async getSurplusHistory(surplusId: string): Promise<SurplusHistory[]> {
+    return db.select().from(surplusHistory)
+      .where(eq(surplusHistory.surplusId, surplusId))
+      .orderBy(desc(surplusHistory.createdAt));
+  }
+
+  async createSurplusHistory(insertHistory: InsertSurplusHistory): Promise<SurplusHistory> {
+    const id = randomUUID();
+    await db.insert(surplusHistory).values({ ...insertHistory, id });
+    const [result] = await db.select().from(surplusHistory).where(eq(surplusHistory.id, id));
+    return result;
+  }
+
+  // SRD Transfers (unified transfer engine)
+  async getSrdTransfers(clientId: string, date?: Date): Promise<SrdTransfer[]> {
+    const conditions = [eq(srdTransfers.clientId, clientId)];
+    if (date) {
+      const start = new Date(date);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(date);
+      end.setHours(23, 59, 59, 999);
+      conditions.push(gte(srdTransfers.transferDate, start));
+      conditions.push(lte(srdTransfers.transferDate, end));
+    }
+    return db.select().from(srdTransfers)
+      .where(and(...conditions))
+      .orderBy(desc(srdTransfers.createdAt));
+  }
+
+  async getSrdTransfersByRefId(refId: string): Promise<SrdTransfer[]> {
+    return db.select().from(srdTransfers)
+      .where(eq(srdTransfers.refId, refId))
+      .orderBy(desc(srdTransfers.createdAt));
+  }
+
+  async getSrdTransfersBySrd(srdId: string, date?: Date): Promise<SrdTransfer[]> {
+    const srdCondition = or(
+      eq(srdTransfers.fromSrdId, srdId),
+      eq(srdTransfers.toSrdId, srdId)
+    );
+
+    if (date) {
+      const start = new Date(date);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(date);
+      end.setHours(23, 59, 59, 999);
+      return db.select().from(srdTransfers)
+        .where(and(
+          srdCondition,
+          gte(srdTransfers.transferDate, start),
+          lte(srdTransfers.transferDate, end)
+        ))
+        .orderBy(desc(srdTransfers.createdAt));
+    }
+
+    return db.select().from(srdTransfers)
+      .where(srdCondition)
+      .orderBy(desc(srdTransfers.createdAt));
+  }
+
+  async createSrdTransfer(transfer: InsertSrdTransfer): Promise<SrdTransfer> {
+    const id = randomUUID();
+    await db.insert(srdTransfers).values({ ...transfer, id });
+    const [result] = await db.select().from(srdTransfers).where(eq(srdTransfers.id, id));
+    return result;
+  }
+
+  async recallSrdTransfer(refId: string): Promise<boolean> {
+    const result = await db.update(srdTransfers)
+      .set({ status: "recalled" })
+      .where(eq(srdTransfers.refId, refId));
+    // Drizzle with neondatabase/serverless returns { rowCount: number } for update
+    return (result.rowCount || 0) > 0;
+  }
+
+  async generateTransferRefId(clientId: string, date: Date): Promise<string> {
+    const dateStr = date.toISOString().split('T')[0].replace(/-/g, '');
+    const start = new Date(date);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(date);
+    end.setHours(23, 59, 59, 999);
+
+    const [result] = await db.select({ count: count() }).from(srdTransfers)
+      .where(and(
+        eq(srdTransfers.clientId, clientId),
+        gte(srdTransfers.transferDate, start),
+        lte(srdTransfers.transferDate, end)
+      ));
+
+    const sequence = (result?.count || 0) + 1;
+    return `TRF-${dateStr}-${sequence.toString().padStart(3, '0')}`;
+  }
+
+  // Purchase Item Events
+  async getPurchaseItemEvent(id: string): Promise<PurchaseItemEvent | undefined> {
+    const [event] = await db.select().from(purchaseItemEvents).where(eq(purchaseItemEvents.id, id));
+    return event;
+  }
+
+  async getPurchaseItemEvents(filters: { clientId: string; srdId?: string; itemId?: string; dateFrom?: Date; dateTo?: Date }): Promise<PurchaseItemEvent[]> {
+    let conditions = [eq(purchaseItemEvents.clientId, filters.clientId)];
+
+    if (filters.srdId) {
+      conditions.push(eq(purchaseItemEvents.srdId, filters.srdId));
+    }
+    if (filters.itemId) {
+      conditions.push(eq(purchaseItemEvents.itemId, filters.itemId));
+    }
+    if (filters.dateFrom) {
+      conditions.push(gte(purchaseItemEvents.date, filters.dateFrom));
+    }
+    if (filters.dateTo) {
+      const endOfDay = new Date(filters.dateTo);
+      endOfDay.setHours(23, 59, 59, 999);
+      conditions.push(lte(purchaseItemEvents.date, endOfDay));
+    }
+
+    return db.select().from(purchaseItemEvents)
+      .where(and(...conditions))
+      .orderBy(desc(purchaseItemEvents.date));
+  }
+
+  async createPurchaseItemEvent(event: InsertPurchaseItemEvent): Promise<PurchaseItemEvent> {
+    const id = randomUUID();
+    await db.insert(purchaseItemEvents).values({ ...event, id });
+    const [result] = await db.select().from(purchaseItemEvents).where(eq(purchaseItemEvents.id, id));
+    return result;
+  }
+
+  async deletePurchaseItemEvent(id: string): Promise<boolean> {
+    const result = await db.delete(purchaseItemEvents).where(eq(purchaseItemEvents.id, id));
+    return (result.rowCount || 0) > 0;
+  }
+
+  async updatePurchaseItemEvent(id: string, updateData: Partial<InsertPurchaseItemEvent>): Promise<PurchaseItemEvent | undefined> {
+    await db.update(purchaseItemEvents)
+      .set({ ...updateData, updatedAt: new Date() })
+      .where(eq(purchaseItemEvents.id, id));
+    const [updated] = await db.select().from(purchaseItemEvents).where(eq(purchaseItemEvents.id, id));
+    return updated;
+  }
+
+  // Subscriptions
+  async getSubscription(organizationId: string): Promise<Subscription | undefined> {
+    const [sub] = await db.select().from(subscriptions).where(eq(subscriptions.organizationId, organizationId));
+    return sub;
+  }
+
+  async getSubscriptions(): Promise<Subscription[]> {
+    return db.select().from(subscriptions).orderBy(desc(subscriptions.createdAt));
+  }
+
+  async createSubscription(subscription: InsertSubscription): Promise<Subscription> {
+    const id = randomUUID();
+    await db.insert(subscriptions).values({ ...subscription, id });
+    const [result] = await db.select().from(subscriptions).where(eq(subscriptions.id, id));
+    return result;
+  }
+
+  async updateSubscription(id: string, updateData: Partial<InsertSubscription>): Promise<Subscription | undefined> {
+    await db.update(subscriptions)
+      .set({ ...updateData, updatedAt: new Date() })
+      .where(eq(subscriptions.id, id));
+    const [updated] = await db.select().from(subscriptions).where(eq(subscriptions.id, id));
+    return updated;
+  }
+
+  async findSubscriptionsByPaystackCustomer(customerCode: string): Promise<Subscription[]> {
+    return db.select().from(subscriptions)
+      .where(eq(subscriptions.paystackCustomerCode, customerCode));
+  }
+
+  async findSubscriptionsByPaystackSubscription(subscriptionCode: string): Promise<Subscription[]> {
+    return db.select().from(subscriptions)
+      .where(eq(subscriptions.paystackSubscriptionCode, subscriptionCode));
+  }
+
+  // Payments
+  async getPayments(organizationId: string): Promise<Payment[]> {
+    return db.select().from(payments)
+      .where(eq(payments.organizationId, organizationId))
+      .orderBy(desc(payments.createdAt));
+  }
+
+  async createPayment(payment: InsertPayment): Promise<Payment> {
+    const id = randomUUID();
+    await db.insert(payments).values({ ...payment, id });
+    const [created] = await db.select().from(payments).where(eq(payments.id, id));
+    return created;
+  }
+
+  async updatePayment(id: string, updateData: Partial<InsertPayment>): Promise<Payment | undefined> {
+    await db.update(payments)
+      .set(updateData)
+      .where(eq(payments.id, id));
+    const [updated] = await db.select().from(payments).where(eq(payments.id, id));
+    return updated;
+  }
+
+  // Organizations
+  async getOrganization(id: string): Promise<Organization | undefined> {
+    const [org] = await db.select().from(organizations).where(eq(organizations.id, id));
+    return org;
+  }
+
+  async createOrganization(org: InsertOrganization): Promise<Organization> {
+    const id = randomUUID();
+    await db.insert(organizations).values({ ...org, id });
+    const [created] = await db.select().from(organizations).where(eq(organizations.id, id));
+    return created;
+  }
+
+  async updateOrganization(id: string, updateData: Partial<InsertOrganization>): Promise<Organization | undefined> {
+    await db.update(organizations)
+      .set({ ...updateData, updatedAt: new Date() })
+      .where(eq(organizations.id, id));
+    const [updated] = await db.select().from(organizations).where(eq(organizations.id, id));
+    return updated;
+  }
+
+  async getClientCountByOrganization(organizationId: string): Promise<number> {
+    const result = await db.select({ count: count() })
+      .from(clients)
+      .where(eq(clients.organizationId, organizationId));
+    return result[0]?.count ?? 0;
+  }
+
+  async getDepartmentCountByClientAndOrganization(clientId: string, organizationId: string): Promise<number> {
+    const result = await db.select({ count: count() })
+      .from(departments)
+      .where(and(
+        eq(departments.clientId, clientId),
+        eq(departments.status, 'active')
+      ));
+    return result[0]?.count ?? 0;
+  }
+
+  async bootstrapOrganizationWithOwner(
+    orgData: InsertOrganization,
+    userData: InsertUser
+  ): Promise<{ organization: Organization; user: User; subscription: Subscription }> {
+    return await db.transaction(async (tx) => {
+      // Create organization
+      const orgId = randomUUID();
+      await tx.insert(organizations).values({ ...orgData, id: orgId });
+      const [organization] = await tx.select().from(organizations).where(eq(organizations.id, orgId));
+
+      // Create user linked to organization
+      const userId = randomUUID();
+      await tx.insert(users).values({
+        ...userData,
+        id: userId,
+        organizationId: organization.id,
+        organizationRole: "owner",
+        accessScope: userData.accessScope as any,
+      });
+      const [user] = await tx.select().from(users).where(eq(users.id, userId));
+
+      // Create starter subscription for the organization
+      const subId = randomUUID();
+      await tx.insert(subscriptions).values({
+        organizationId: organization.id,
+        planName: "starter",
+        billingPeriod: "monthly",
+        slotsPurchased: 1,
+        status: "trial",
+        startDate: new Date(),
+        id: subId,
+      });
+      const [subscription] = await tx.select().from(subscriptions).where(eq(subscriptions.id, subId));
+
+      return { organization, user, subscription };
+    });
+  }
+}
+
+export const storage = new DbStorage();
