@@ -92,12 +92,12 @@
     "@tailwindcss/vite": "^4.1.14",
     "tailwindcss": "^4.1.14",
     "autoprefixer": "^10.4.21",
-    "postcss": "^8.5.6"
-  },
-  "devDependencies": {
+    "postcss": "^8.5.6",
     "@replit/vite-plugin-cartographer": "^0.4.4",
     "@replit/vite-plugin-dev-banner": "^0.1.1",
-    "@replit/vite-plugin-runtime-error-modal": "^0.0.4",
+    "@replit/vite-plugin-runtime-error-modal": "^0.0.4"
+  },
+  "devDependencies": {
     "@types/express": "4.17.21",
     "@types/express-session": "^1.18.0",
     "@types/node": "^20.19.0",
