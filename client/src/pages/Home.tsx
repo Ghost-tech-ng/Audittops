@@ -7,12 +7,12 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/
 import { Label } from "@/components/ui/label";
 import { useLocation, Link } from "wouter";
 import { useState, useEffect, useMemo } from "react";
-import { 
-  ClipboardCheck, 
-  Package, 
-  Warehouse, 
-  Calculator, 
-  AlertTriangle, 
+import {
+  ClipboardCheck,
+  Package,
+  Warehouse,
+  Calculator,
+  AlertTriangle,
   FileText,
   Play,
   Check,
@@ -23,11 +23,15 @@ import {
   Shield,
   BarChart3,
   FileBarChart,
-  Lock
+  Lock,
+  Sun,
+  Moon
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
-import logoImage from "@/assets/logo2.png";
+import { useTheme } from "@/components/ThemeProvider";
+import logoLight from "@/assets/logo-light.png";
+import logoDark from "@/assets/logo-dark.png";
 
 interface DBPricingPlan {
   slug: string;
@@ -54,6 +58,7 @@ interface DBPricingPlan {
 export default function Home() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const { theme, setTheme } = useTheme();
   const [billingPeriod, setBillingPeriod] = useState<"monthly" | "quarterly" | "yearly">("yearly");
   const [selectedSlots, setSelectedSlots] = useState<1 | 3 | 5 | 10>(1);
   const [contactForm, setContactForm] = useState({ name: "", email: "", message: "" });
@@ -63,7 +68,7 @@ export default function Home() {
     fetch("/api/public/pricing")
       .then((res) => res.json())
       .then((data) => setDbPricing(data))
-      .catch(() => {});
+      .catch(() => { });
   }, []);
 
   const getDbPrice = (slug: string) => {
@@ -82,11 +87,11 @@ export default function Home() {
 
   const calculatePrice = (baseMonthly: number, planSlug?: string) => {
     const dbPrice = planSlug ? getDbPrice(planSlug) : null;
-    
+
     let basePrice = baseMonthly;
     let multiplier = 1;
     let periods = 1;
-    
+
     if (dbPrice) {
       if (billingPeriod === "monthly") {
         basePrice = dbPrice.monthly;
@@ -242,24 +247,41 @@ export default function Home() {
   ];
 
   return (
-    <div className="min-h-screen bg-white">
-      <nav className="sticky top-0 z-50 bg-white border-b border-gray-200 shadow-sm">
+    <div className="min-h-screen bg-background text-foreground">
+      <nav className="sticky top-0 z-50 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-20">
             <Link href="/" className="flex items-center">
-              <img src={logoImage} alt="MiAuditOps" className="h-20 object-contain" />
+              <img src={theme === "dark" ? logoDark : logoLight} alt="MiAuditOps" className="h-8 sm:h-10 w-auto object-contain" />
             </Link>
             <div className="hidden md:flex items-center gap-6">
-              <a href="#features" className="text-sm text-gray-600 hover:text-gray-900 font-medium transition-colors" data-testid="nav-features">Features</a>
-              <a href="#pricing" className="text-sm text-gray-600 hover:text-gray-900 font-medium transition-colors" data-testid="nav-pricing">Pricing</a>
-              <a href="#about" className="text-sm text-gray-600 hover:text-gray-900 font-medium transition-colors" data-testid="nav-about">About</a>
-              <a href="#contact" className="text-sm text-gray-600 hover:text-gray-900 font-medium transition-colors" data-testid="nav-contact">Contact</a>
+              <a href="#features" className="text-sm text-muted-foreground hover:text-foreground font-medium transition-colors" data-testid="nav-features">Features</a>
+              <a href="#pricing" className="text-sm text-muted-foreground hover:text-foreground font-medium transition-colors" data-testid="nav-pricing">Pricing</a>
+              <a href="#about" className="text-sm text-muted-foreground hover:text-foreground font-medium transition-colors" data-testid="nav-about">About</a>
+              <a href="#contact" className="text-sm text-muted-foreground hover:text-foreground font-medium transition-colors" data-testid="nav-contact">Contact</a>
             </div>
             <div className="flex items-center gap-3">
-              <Button variant="outline" onClick={() => setLocation("/login")} className="text-gray-700 border-gray-300 hover:bg-gray-50" data-testid="nav-signin">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+                    className="border-2"
+                  >
+                    <Sun className="h-5 w-5 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
+                    <Moon className="absolute h-5 w-5 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
+                    <span className="sr-only">Toggle theme</span>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Switch to {theme === "dark" ? "light" : "dark"} mode</p>
+                </TooltipContent>
+              </Tooltip>
+              <Button variant="outline" onClick={() => setLocation("/login")} data-testid="nav-signin">
                 Sign In
               </Button>
-              <Button onClick={() => setLocation("/signup")} className="bg-primary text-white transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg" data-testid="nav-signup">
+              <Button onClick={() => setLocation("/signup")} className="bg-primary text-primary-foreground transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg" data-testid="nav-signup">
                 Get Started
               </Button>
             </div>
@@ -276,21 +298,21 @@ export default function Home() {
               <span className="text-primary">Evidence-Ready Reports.</span>
             </h1>
             <p className="text-lg md:text-xl text-muted-foreground mb-8 max-w-2xl mx-auto leading-relaxed">
-              MiAuditOps helps auditors and hospitality businesses capture sales, reconcile stock, 
+              MiAuditOps helps auditors and hospitality businesses capture sales, reconcile stock,
               raise exceptions, and produce clean reports—daily, weekly, and monthly.
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center mb-8">
-              <Button 
-                size="lg" 
-                onClick={() => setLocation("/signup")} 
+              <Button
+                size="lg"
+                onClick={() => setLocation("/signup")}
                 className="text-base px-8 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg"
                 data-testid="hero-cta-primary"
               >
                 Get Started <ChevronRight className="ml-2 h-4 w-4" />
               </Button>
-              <Button 
-                size="lg" 
-                variant="outline" 
+              <Button
+                size="lg"
+                variant="outline"
                 className="text-base px-8 transition-all duration-200 hover:-translate-y-0.5 hover:bg-white/10"
                 data-testid="hero-cta-secondary"
               >
@@ -381,18 +403,17 @@ export default function Home() {
             <p className="text-muted-foreground max-w-2xl mx-auto mb-8">
               Monthly, Quarterly, and Yearly billing. Upgrade anytime as your clients, departments, and reporting needs grow.
             </p>
-            
+
             <div className="flex flex-col sm:flex-row items-center justify-center gap-6 mb-6">
               <div className="flex items-center gap-2 bg-card border border-border rounded-lg p-1">
                 {(["monthly", "quarterly", "yearly"] as const).map((period) => (
                   <button
                     key={period}
                     onClick={() => setBillingPeriod(period)}
-                    className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
-                      billingPeriod === period 
-                        ? "bg-primary text-primary-foreground" 
-                        : "text-muted-foreground hover:text-foreground"
-                    }`}
+                    className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${billingPeriod === period
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:text-foreground"
+                      }`}
                     data-testid={`billing-${period}`}
                   >
                     {period.charAt(0).toUpperCase() + period.slice(1)}
@@ -410,11 +431,10 @@ export default function Home() {
                   <button
                     key={slots}
                     onClick={() => setSelectedSlots(slots)}
-                    className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
-                      selectedSlots === slots 
-                        ? "bg-primary text-primary-foreground" 
-                        : "text-muted-foreground hover:text-foreground"
-                    }`}
+                    className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${selectedSlots === slots
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:text-foreground"
+                      }`}
                     data-testid={`slots-${slots}`}
                   >
                     {slots}
@@ -462,10 +482,10 @@ export default function Home() {
                         </>
                       )}
                     </div>
-                    
+
                     <p className="text-xs text-muted-foreground mb-3 italic">Best for: {plan.bestFor}</p>
                     <p className="text-xs text-muted-foreground mb-4 border-t border-border pt-2">{plan.limits}</p>
-                    
+
                     <div className="space-y-2 mb-4 flex-1">
                       <p className="text-xs font-semibold text-foreground">What you get:</p>
                       {plan.features.map((feature, j) => (
@@ -474,7 +494,7 @@ export default function Home() {
                           <span className="text-xs text-foreground/80">{feature}</span>
                         </div>
                       ))}
-                      
+
                       {plan.locked.length > 0 && (
                         <>
                           <p className="text-xs font-semibold text-muted-foreground mt-3">Locked in {plan.name}:</p>
@@ -494,9 +514,9 @@ export default function Home() {
                         </>
                       )}
                     </div>
-                    
+
                     <div className="mt-auto space-y-2">
-                      <Button 
+                      <Button
                         className="w-full transition-all duration-200 hover:-translate-y-0.5"
                         variant={plan.popular ? "default" : "outline"}
                         onClick={() => setLocation("/signup")}
@@ -504,7 +524,7 @@ export default function Home() {
                       >
                         {plan.cta}
                       </Button>
-                      <button 
+                      <button
                         className="w-full text-xs text-primary hover:underline"
                         data-testid={`link-pricing-${plan.name.toLowerCase()}-secondary`}
                       >
@@ -526,8 +546,8 @@ export default function Home() {
               About MiAuditOps
             </h2>
             <p className="text-muted-foreground max-w-3xl mx-auto leading-relaxed">
-              MiAuditOps is a purpose-built audit operations platform for hospitality businesses and auditors. 
-              It structures daily audit work—from sales capture and payment declaration to SRD stock reconciliation 
+              MiAuditOps is a purpose-built audit operations platform for hospitality businesses and auditors.
+              It structures daily audit work—from sales capture and payment declaration to SRD stock reconciliation
               and exceptions—then produces clear executive reports that build trust with owners and stakeholders.
             </p>
           </div>
@@ -610,8 +630,8 @@ export default function Home() {
                 <form onSubmit={handleContactSubmit} className="space-y-4">
                   <div>
                     <Label htmlFor="contact-name">Name</Label>
-                    <Input 
-                      id="contact-name" 
+                    <Input
+                      id="contact-name"
                       value={contactForm.name}
                       onChange={(e) => setContactForm({ ...contactForm, name: e.target.value })}
                       placeholder="Your name"
@@ -622,8 +642,8 @@ export default function Home() {
                   </div>
                   <div>
                     <Label htmlFor="contact-email">Email</Label>
-                    <Input 
-                      id="contact-email" 
+                    <Input
+                      id="contact-email"
                       type="email"
                       value={contactForm.email}
                       onChange={(e) => setContactForm({ ...contactForm, email: e.target.value })}
@@ -635,8 +655,8 @@ export default function Home() {
                   </div>
                   <div>
                     <Label htmlFor="contact-message">Message</Label>
-                    <Textarea 
-                      id="contact-message" 
+                    <Textarea
+                      id="contact-message"
                       value={contactForm.message}
                       onChange={(e) => setContactForm({ ...contactForm, message: e.target.value })}
                       placeholder="How can we help?"
@@ -681,7 +701,7 @@ export default function Home() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex flex-col md:flex-row justify-between items-center gap-6">
             <div className="flex items-center gap-3">
-              <img src={logoImage} alt="MiAuditOps" className="h-[72px] object-contain" />
+              <img src={theme === "dark" ? logoDark : logoLight} alt="MiAuditOps" className="h-8 sm:h-10 w-auto object-contain" />
             </div>
             <div className="flex items-center gap-6 text-sm">
               <Link href="/" className="text-muted-foreground hover:text-foreground transition-colors">Home</Link>

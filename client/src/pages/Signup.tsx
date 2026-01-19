@@ -7,17 +7,20 @@ import { useLocation, Link } from "wouter";
 import { useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { Eye, EyeOff, Building2, Users, ArrowLeft } from "lucide-react";
-import logoImage from "@/assets/logo2.png";
+import { useTheme } from "@/components/ThemeProvider";
+import logoLight from "@/assets/logo-light.png";
+import logoDark from "@/assets/logo-dark.png";
 
 export default function Signup() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const { theme } = useTheme();
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [accountType, setAccountType] = useState<"company" | "auditor">("company");
   const [agreedToTerms, setAgreedToTerms] = useState(false);
-  
+
   const [formData, setFormData] = useState({
     organizationName: "",
     fullName: "",
@@ -62,7 +65,7 @@ export default function Signup() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!validateForm()) {
       toast({
         variant: "destructive",
@@ -98,7 +101,7 @@ export default function Signup() {
         title: "Account created!",
         description: "Please check your email to verify your account.",
       });
-      
+
       setLocation(`/check-email?email=${encodeURIComponent(formData.email)}`);
     } catch (error: any) {
       toast({
@@ -114,8 +117,8 @@ export default function Signup() {
   return (
     <div className="min-h-screen flex flex-col bg-background">
       <div className="p-4">
-        <Button 
-          variant="ghost" 
+        <Button
+          variant="ghost"
           onClick={() => setLocation("/")}
           className="gap-2 text-muted-foreground hover:text-foreground"
           data-testid="button-back-home"
@@ -129,10 +132,10 @@ export default function Signup() {
           <div className="p-8 rounded-xl border border-border shadow-lg bg-card">
             <div className="text-center space-y-2 mb-8">
               <Link href="/">
-                <img 
-                  src={logoImage} 
-                  alt="MiAuditOps" 
-                  className="h-24 mx-auto object-contain cursor-pointer" 
+                <img
+                  src={theme === "dark" ? logoDark : logoLight}
+                  alt="MiAuditOps"
+                  className="h-10 mx-auto object-contain cursor-pointer"
                 />
               </Link>
               <h1 className="text-2xl font-display font-bold text-foreground">Create your account</h1>
@@ -142,8 +145,8 @@ export default function Signup() {
             <form onSubmit={handleSubmit} className="space-y-5">
               <div className="space-y-3">
                 <Label className="text-sm font-medium">Sign up as</Label>
-                <RadioGroup 
-                  value={accountType} 
+                <RadioGroup
+                  value={accountType}
                   onValueChange={(val) => setAccountType(val as "company" | "auditor")}
                   className="grid grid-cols-2 gap-4"
                 >
@@ -151,9 +154,8 @@ export default function Signup() {
                     <RadioGroupItem value="company" id="company" className="peer sr-only" data-testid="radio-company" />
                     <Label
                       htmlFor="company"
-                      className={`flex flex-col items-center justify-between rounded-md border-2 p-4 cursor-pointer transition-all duration-200 ${
-                        accountType === 'company' ? 'border-primary bg-primary/10' : 'border-border'
-                      }`}
+                      className={`flex flex-col items-center justify-between rounded-md border-2 p-4 cursor-pointer transition-all duration-200 ${accountType === 'company' ? 'border-primary bg-primary/10' : 'border-border'
+                        }`}
                     >
                       <Building2 className="mb-2 h-6 w-6 text-foreground" />
                       <span className="text-sm font-medium text-foreground">Company</span>
@@ -163,9 +165,8 @@ export default function Signup() {
                     <RadioGroupItem value="auditor" id="auditor" className="peer sr-only" data-testid="radio-auditor" />
                     <Label
                       htmlFor="auditor"
-                      className={`flex flex-col items-center justify-between rounded-md border-2 p-4 cursor-pointer transition-all duration-200 ${
-                        accountType === 'auditor' ? 'border-primary bg-primary/10' : 'border-border'
-                      }`}
+                      className={`flex flex-col items-center justify-between rounded-md border-2 p-4 cursor-pointer transition-all duration-200 ${accountType === 'auditor' ? 'border-primary bg-primary/10' : 'border-border'
+                        }`}
                     >
                       <Users className="mb-2 h-6 w-6 text-foreground" />
                       <span className="text-sm font-medium text-foreground">Auditor</span>

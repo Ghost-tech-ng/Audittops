@@ -337,14 +337,6 @@ export default function Reports() {
     });
   };
 
-  useEffect(() => {
-    if (isLoadingData && dataLoaded) {
-      buildReportData();
-      setIsLoadingData(false);
-      setPreviewOpen(true);
-    }
-  }, [isLoadingData, dataLoaded, allSalesData, exceptionsData, stockMovementsData, departmentComparisonData, purchaseEventsData, grnData, receivablesData, surplusData, paymentDeclarationsData, auditLogsData]);
-
   const toggleSection = (sectionId: string) => {
     setSelectedSections(prev =>
       prev.includes(sectionId)
@@ -952,7 +944,16 @@ export default function Reports() {
   };
 
   const handleGeneratePreview = () => {
-    setIsLoadingData(true);
+    try {
+      // Build report data immediately from already-loaded data
+      buildReportData();
+      // Open preview dialog
+      setPreviewOpen(true);
+      toast.success("Report preview generated");
+    } catch (error) {
+      console.error("Error generating preview:", error);
+      toast.error("Failed to generate preview. Please try again.");
+    }
   };
 
   const handlePrint = () => {

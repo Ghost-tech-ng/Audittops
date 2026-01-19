@@ -7,7 +7,9 @@ import { useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { useToast } from "@/hooks/use-toast";
 import { RefreshCw, Mail, Play, Eye, EyeOff, Activity } from "lucide-react";
-import logoImage from "@/assets/logo2.png";
+import { useTheme } from "@/components/ThemeProvider";
+import logoLight from "@/assets/logo-light.png";
+import logoDark from "@/assets/logo-dark.png";
 import { logAuthEvent } from "@/lib/auth-debug";
 
 const isDevelopment = import.meta.env.DEV;
@@ -24,6 +26,7 @@ export default function Login() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const { login, refreshUser } = useAuth();
+  const { theme } = useTheme();
   const [isLoading, setIsLoading] = useState(false);
   const [isDemoLoading, setIsDemoLoading] = useState(false);
   const [unverifiedEmail, setUnverifiedEmail] = useState<string | null>(null);
@@ -37,17 +40,17 @@ export default function Login() {
     setIsCheckingHealth(true);
     setHealthResult(null);
     logAuthEvent("HEALTH_CHECK", { message: "Manual health check triggered" });
-    
+
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 10000);
-      
-      const response = await fetch("/api/health", { 
+
+      const response = await fetch("/api/health", {
         signal: controller.signal,
         credentials: "include"
       });
       clearTimeout(timeoutId);
-      
+
       if (response.ok) {
         const data = await response.json();
         setHealthResult({
@@ -80,7 +83,7 @@ export default function Login() {
       });
 
       const data = await response.json();
-      
+
       if (response.ok) {
         await refreshUser();
         toast({
@@ -108,7 +111,7 @@ export default function Login() {
 
   const handleResendVerification = async () => {
     if (!unverifiedEmail) return;
-    
+
     setIsResending(true);
     try {
       const response = await fetch("/api/auth/resend-verification", {
@@ -118,7 +121,7 @@ export default function Login() {
       });
 
       const data = await response.json();
-      
+
       if (response.ok) {
         toast({
           title: "Email sent!",
@@ -149,14 +152,14 @@ export default function Login() {
     setUnverifiedEmail(null);
     setLoginError(null);
     setHealthResult(null);
-    
+
     const formData = new FormData(e.currentTarget);
     const username = formData.get("username") as string;
     const password = formData.get("password") as string;
 
     try {
       const user = await login(username, password);
-      
+
       if (user.mustChangePassword) {
         toast({
           title: "Password Change Required",
@@ -165,7 +168,7 @@ export default function Login() {
         setLocation("/change-password");
         return;
       }
-      
+
       toast({
         title: "Welcome back!",
         description: `Signed in as ${user.fullName}`,
@@ -175,14 +178,14 @@ export default function Login() {
       if (error.code === "EMAIL_NOT_VERIFIED" && error.email) {
         setUnverifiedEmail(error.email);
       }
-      
+
       // Track if this is a timeout/network error for health check button
       if (error.isTimeout) {
         setLoginError("timeout");
       } else if (error.status === 0 || error.message?.includes("Network")) {
         setLoginError("network");
       }
-      
+
       toast({
         variant: "destructive",
         title: "Login failed",
@@ -198,10 +201,10 @@ export default function Login() {
       <div className="w-full max-w-md space-y-8 p-8 rounded-xl border border-border shadow-lg bg-card">
         <div className="text-center space-y-2">
           <Link href="/" className="block mx-auto mb-4">
-            <img 
-              src={logoImage} 
-              alt="MiAuditOps" 
-              className="h-24 mx-auto object-contain cursor-pointer" 
+            <img
+              src={theme === "dark" ? logoDark : logoLight}
+              alt="MiAuditOps"
+              className="h-10 mx-auto object-contain cursor-pointer"
             />
           </Link>
           <p className="text-sm text-muted-foreground">Enter your credentials to access the workspace</p>
@@ -210,11 +213,11 @@ export default function Login() {
         <form onSubmit={handleLogin} className="space-y-6">
           <div className="space-y-2">
             <Label htmlFor="username">Email or Username</Label>
-            <Input 
-              id="username" 
+            <Input
+              id="username"
               name="username"
-              type="text" 
-              placeholder="you@example.com" 
+              type="text"
+              placeholder="you@example.com"
               className="h-10"
               required
               data-testid="input-username"
@@ -223,16 +226,16 @@ export default function Login() {
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <Label htmlFor="password">Password</Label>
-              <Link 
-                href="/forgot-password" 
+              <Link
+                href="/forgot-password"
                 className="text-xs font-medium text-primary hover:underline"
               >
                 Forgot password?
               </Link>
             </div>
             <div className="relative">
-              <Input 
-                id="password" 
+              <Input
+                id="password"
                 name="password"
                 type={showPassword ? "text" : "password"}
                 className="h-10 pr-10"
@@ -249,7 +252,7 @@ export default function Login() {
               </button>
             </div>
           </div>
-          
+
           <div className="flex items-center space-x-2">
             <Checkbox id="remember" data-testid="checkbox-remember" />
             <label
@@ -260,9 +263,9 @@ export default function Login() {
             </label>
           </div>
 
-          <Button 
-            type="submit" 
-            className="w-full h-10 font-medium transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg" 
+          <Button
+            type="submit"
+            className="w-full h-10 font-medium transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg"
             disabled={isLoading}
             data-testid="button-login"
           >
@@ -279,8 +282,8 @@ export default function Login() {
                 </span>
               </div>
               <p className="text-sm text-muted-foreground mb-3">
-                {loginError === "timeout" 
-                  ? "The server took too long to respond." 
+                {loginError === "timeout"
+                  ? "The server took too long to respond."
                   : "Unable to connect to the server."}
               </p>
               <Button
@@ -304,13 +307,12 @@ export default function Login() {
                   </>
                 )}
               </Button>
-              
+
               {healthResult && (
-                <div className={`mt-3 p-3 rounded text-sm ${
-                  healthResult.ok 
-                    ? "bg-green-100 dark:bg-green-950/30 text-green-800 dark:text-green-300" 
-                    : "bg-red-100 dark:bg-red-950/30 text-red-800 dark:text-red-300"
-                }`}>
+                <div className={`mt-3 p-3 rounded text-sm ${healthResult.ok
+                  ? "bg-green-100 dark:bg-green-950/30 text-green-800 dark:text-green-300"
+                  : "bg-red-100 dark:bg-red-950/30 text-red-800 dark:text-red-300"
+                  }`}>
                   {healthResult.ok ? (
                     <>
                       <div className="font-medium">Server is reachable</div>
@@ -340,12 +342,12 @@ export default function Login() {
               </div>
             </div>
           )}
-          
+
           {isDevelopment && (
-            <Button 
+            <Button
               type="button"
               variant="outline"
-              className="w-full h-10 font-medium gap-2 border-dashed border-primary text-primary hover:bg-primary/10" 
+              className="w-full h-10 font-medium gap-2 border-dashed border-primary text-primary hover:bg-primary/10"
               disabled={isDemoLoading}
               onClick={handleDemoLogin}
               data-testid="button-demo-login"
@@ -394,9 +396,9 @@ export default function Login() {
         <div className="text-center space-y-2">
           <p className="text-sm text-muted-foreground">
             Don't have an account?{" "}
-            <Link 
-              href="/signup" 
-              className="font-medium text-primary hover:underline" 
+            <Link
+              href="/signup"
+              className="font-medium text-primary hover:underline"
               data-testid="link-signup"
             >
               Sign up

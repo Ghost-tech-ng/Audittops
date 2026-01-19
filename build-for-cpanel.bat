@@ -6,7 +6,7 @@ echo.
 
 REM Update environment to point to Render backend
 echo Step 1: Updating environment configuration...
-echo VITE_API_URL=https://auditops-backend.onrender.com/api > client\.env.production
+echo VITE_API_URL=https://audittops.onrender.com/api > client\.env.production
 echo Environment updated!
 echo.
 

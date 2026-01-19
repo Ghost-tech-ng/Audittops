@@ -5,17 +5,20 @@ import { Link } from "wouter";
 import { useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { ArrowLeft, Mail } from "lucide-react";
-import logoImage from "@/assets/logo2.png";
+import { useTheme } from "@/components/ThemeProvider";
+import logoLight from "@/assets/logo-light.png";
+import logoDark from "@/assets/logo-dark.png";
 
 export default function ForgotPassword() {
   const { toast } = useToast();
+  const { theme } = useTheme();
   const [isLoading, setIsLoading] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setIsLoading(true);
-    
+
     const formData = new FormData(e.currentTarget);
     const email = formData.get("email") as string;
 
@@ -27,7 +30,7 @@ export default function ForgotPassword() {
       });
 
       const data = await response.json();
-      
+
       if (response.ok) {
         setEmailSent(true);
         toast({
@@ -58,10 +61,10 @@ export default function ForgotPassword() {
         <div className="w-full max-w-md space-y-8 p-8 rounded-xl border border-border shadow-lg bg-card">
           <div className="text-center space-y-4">
             <Link href="/" className="block mx-auto mb-4">
-              <img 
-                src={logoImage} 
-                alt="MiAuditOps" 
-                className="h-24 mx-auto object-contain cursor-pointer" 
+              <img
+                src={theme === "dark" ? logoDark : logoLight}
+                alt="MiAuditOps"
+                className="h-10 mx-auto object-contain cursor-pointer"
               />
             </Link>
             <div className="mx-auto w-16 h-16 rounded-full bg-primary/20 flex items-center justify-center">
@@ -69,7 +72,7 @@ export default function ForgotPassword() {
             </div>
             <h2 className="text-2xl font-bold text-foreground">Check your email</h2>
             <p className="text-muted-foreground">
-              If an account exists with that email, we've sent you a password reset link. 
+              If an account exists with that email, we've sent you a password reset link.
               Please check your inbox and spam folder.
             </p>
             <p className="text-sm text-muted-foreground">
@@ -94,10 +97,10 @@ export default function ForgotPassword() {
       <div className="w-full max-w-md space-y-8 p-8 rounded-xl border border-border shadow-lg bg-card">
         <div className="text-center space-y-2">
           <Link href="/" className="block mx-auto mb-4">
-            <img 
-              src={logoImage} 
-              alt="MiAuditOps" 
-              className="h-24 mx-auto object-contain cursor-pointer" 
+            <img
+              src={logoImage}
+              alt="MiAuditOps"
+              className="h-24 mx-auto object-contain cursor-pointer"
             />
           </Link>
           <h2 className="text-2xl font-bold text-foreground">Forgot your password?</h2>
@@ -109,20 +112,20 @@ export default function ForgotPassword() {
         <form onSubmit={handleSubmit} className="space-y-6">
           <div className="space-y-2">
             <Label htmlFor="email">Email Address</Label>
-            <Input 
-              id="email" 
+            <Input
+              id="email"
               name="email"
-              type="email" 
-              placeholder="you@example.com" 
+              type="email"
+              placeholder="you@example.com"
               className="h-10"
               required
               data-testid="input-email"
             />
           </div>
 
-          <Button 
-            type="submit" 
-            className="w-full h-10 font-medium transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg" 
+          <Button
+            type="submit"
+            className="w-full h-10 font-medium transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg"
             disabled={isLoading}
             data-testid="button-send-reset"
           >
